@@ -186,21 +186,14 @@ async function sendMessage(to, body) {
 // ─── Enviar email con Nodemailer ──────────────────────────────────────────────
 async function enviarEmail(phone, data) {
   try {
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-	port: 465,
-	secure: true,
-      auth: {
-        user: GMAIL_USER,
-        pass: GMAIL_APP_PASSWORD, // Contraseña de aplicación de Google
-      },
-    });
+    const { Resend } = require('resend');
+    const resend = new Resend(process.env.RESEND_API_KEY);
 
     const fecha = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
 
-    await transporter.sendMail({
-      from: `"Bot WhatsApp" <${GMAIL_USER}>`,
-      to: DESTINATION_EMAIL,
+    await resend.emails.send({
+      from: 'Bot WhatsApp <onboarding@resend.dev>',
+      to: process.env.DESTINATION_EMAIL,
       subject: `📦 Nueva solicitud de cliente - ${data.razonSocial}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #e0e0e0; border-radius: 8px;">
