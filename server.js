@@ -187,7 +187,9 @@ async function sendMessage(to, body) {
 async function enviarEmail(phone, data) {
   try {
     const transporter = nodemailer.createTransport({
-      service: "gmail",
+      host: "smtp.gmail.com",
+	port: 465,
+	secure: true,
       auth: {
         user: GMAIL_USER,
         pass: GMAIL_APP_PASSWORD, // Contraseña de aplicación de Google
