@@ -1,0 +1,19 @@
+{
+  "name": "whatsapp-bot-solicitudes",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp para captura de solicitudes de clientes con envío a email",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.13"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
