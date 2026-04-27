@@ -85,7 +85,7 @@ async function handleMessage(phone, text) {
       session.step = STEPS.WAITING_RUT;
       break;
 
-    case STEPS.WAITING_RUT:
+   case STEPS.WAITING_RUT:
       if (!validarRUT(text)) {
         await sendMessage(phone,
           `⚠️ El RUT ingresado no parece válido.\n` +
@@ -94,6 +94,14 @@ async function handleMessage(phone, text) {
         break;
       }
       session.data.rut = text.toUpperCase();
+      await sendMessage(phone, `🔍 Buscando tu historial de compras...`);
+      const historial = await consultarHistorialCliente(text.replace(/[.\-]/g, ''));
+      if (historial) {
+        await sendMessage(phone, historial);
+        session.data.historial = historial;
+      } else {
+        await sendMessage(phone, `ℹ️ No encontré compras anteriores con margen superior al 20% en los últimos 6 meses.`);
+      }
       await sendMessage(phone,
         `✅ RUT registrado: *${session.data.rut}*\n\n` +
         `🏢 ¿Cuál es la *Razón Social* de tu empresa?`
@@ -231,6 +239,77 @@ async function enviarEmail(phone, data) {
     return false;
   }
 }
+// ─── Consulta Power BI ────────────────────────────────────────────────────────
+async function consultarHistorialCliente(rut) {
+  try {
+    // Obtener token de Power BI
+    const tokenResp = await axios.post(
+      `https://login.microsoftonline.com/${process.env.PBI_TENANT_ID}/oauth2/v2.0/token`,
+      new URLSearchParams({
+        grant_type: 'password',
+        client_id: process.env.PBI_CLIENT_ID,
+        client_secret: process.env.PBI_CLIENT_SECRET,
+        username: process.env.PBI_USERNAME,
+        password: process.env.PBI_PASSWORD,
+        scope: 'https://analysis.windows.net/powerbi/api/.default'
+      })
+    );
+
+    const accessToken = tokenResp.data.access_token;
+
+    // Consultar dataset de Power BI con DAX
+    const query = {
+      queries: [{
+        query: `
+          EVALUATE
+          FILTER(
+            SELECTCOLUMNS(
+              'Ventas',
+              "RUT", 'Ventas'[RUT],
+              "Producto", 'Ventas'[Producto],
+              "Precio", 'Ventas'[Ultimo Precio],
+              "Costo", 'Ventas'[Costo Vta],
+              "Fecha", 'Ventas'[Fecha],
+              "Margen", 'Ventas'[Margen]
+            ),
+            AND(
+              'Ventas'[RUT] = "${rut}",
+              AND(
+                'Ventas'[Margen] > 0.20,
+                'Ventas'[Fecha] >= DATE(${new Date().getFullYear()}, ${new Date().getMonth() - 5 < 1 ? new Date().getMonth() + 7 : new Date().getMonth() - 5}, 1)
+              )
+            )
+          )
+        `
+      }],
+      serializerSettings: { includeNulls: true }
+    };
+
+    const dataResp = await axios.post(
+      `https://api.powerbi.com/v1.0/myorg/datasets/${process.env.PBI_DATASET_ID}/executeQueries`,
+      query,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    const rows = dataResp.data.results[0].tables[0].rows;
+    if (!rows || rows.length === 0) return null;
+
+    // Formatear resultados
+    let mensaje = `📊 *Historial de compras (últimos 6 meses):*\n\n`;
+    rows.forEach((row, i) => {
+      const fecha = new Date(row['[Fecha]']).toLocaleDateString('es-CL');
+      const precio = parseInt(row['[Precio]']).toLocaleString('es-CL');
+      const margen = (row['[Margen]'] * 100).toFixed(1);
+      mensaje += `${i + 1}. *${row['[Producto]']}*\n   💰 Último precio: $${precio}\n   📈 Margen: ${margen}%\n   📅 Fecha: ${fecha}\n\n`;
+    });
+
+    return mensaje;
+  } catch (err) {
+    console.error('Error consultando Power BI:', err.response?.data || err.message);
+    return null;
+  }
+}
+
 
 // ─── Validación básica de RUT chileno ─────────────────────────────────────────
 function validarRUT(rut) {
