@@ -231,6 +231,18 @@ const filasConRut = rows.filter(r =>
   (r["CodAuxGSaen"] || "") === rutSinDV
 );
 console.log("Filas encontradas para este RUT:", filasConRut.length);
+// Debug filtros
+filasConRut.forEach((row, i) => {
+  const fechaStr = row["Fecha Ult. Vta"] || "";
+  const parts = fechaStr.split("/");
+  const fecha = parts.length === 3 ? new Date(`${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}`) : new Date(fechaStr);
+  const precio = parseFloat((row["Ultimo Precio"] || "0").replace(/[$.\s]/g,"").replace(",","."));
+  const costoStr = (row["Costo Vta"] || "0").replace(/[$.\s]/g,"").replace(",",".");
+  const costo = parseFloat(costoStr) || 0;
+  const margen = precio > 0 ? (precio - costo) / precio : 0;
+  const desc = (row["DesProd"] || "").toLowerCase();
+  console.log(`Fila ${i}: ${desc} | fecha: ${fecha.toLocaleDateString()} | margen: ${(margen*100).toFixed(1)}% | fechaOk: ${fecha >= haceSeismeses} | margenOk: ${margen >= 0.20}`);
+});
 if (filasConRut.length > 0) console.log("Ejemplo:", JSON.stringify(filasConRut[0]));
     console.log("Columnas disponibles:", Object.keys(rows[0]));
     const haceSeismeses = new Date();
