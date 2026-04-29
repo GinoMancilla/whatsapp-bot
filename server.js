@@ -229,13 +229,25 @@ async function buscarProductoEnHistorial(rutLimpio, productoBuscado) {
 
     const resultados = rows.filter(row => {
       // Filtrar por RUT (sin puntos ni guión)
-      const rutRow = (row["NomAux"] || "").replace(/[.\-\s]/g, "");
-      const rutMatch = rutRow === rutLimpio || 
-                       (row["RUT"] || "").replace(/[.\-\s]/g, "") === rutLimpio;
+      const rutRow = (row["codauxgsaen"] || "").replace(/[.\-\s]/g, "");
+      const rutMatch = rutRow === rutLimpio;
 
       // Filtrar por fecha últimos 6 meses
       const fechaStr = row["Fecha Ult. Vta"] || row["Fecha"] || "";
-      const fecha = new Date(fechaStr);
+      // Parsear fecha en formato DD-MM-YYYY o DD/MM/YYYY
+      let fecha;
+      if (fechaStr.includes("-") || fechaStr.includes("/")) {
+        const sep = fechaStr.includes("-") ? "-" : "/";
+        const parts = fechaStr.split(sep);
+        if (parts[0].length === 2) {
+          // Formato DD-MM-YYYY
+          fecha = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+        } else {
+          fecha = new Date(fechaStr);
+        }
+      } else {
+        fecha = new Date(fechaStr);
+      }
       const fechaOk = fecha >= haceSeismeses;
 
       // Calcular margen: (PrecioVta - Costo) / PrecioVta
