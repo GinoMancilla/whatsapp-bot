@@ -222,6 +222,10 @@ async function buscarProductoEnHistorial(rutLimpio, productoBuscado) {
     const resp = await axios.get(process.env.GOOGLE_SHEETS_CSV_URL);
     const rows = parse(resp.data, { columns: true, skip_empty_lines: true });
 
+console.log("Total filas CSV:", rows.length);
+    console.log("Primera fila:", JSON.stringify(rows[0]));
+    console.log("RUT buscado:", rutLimpio);
+    console.log("Columnas disponibles:", Object.keys(rows[0]));
     const haceSeismeses = new Date();
     haceSeismeses.setMonth(haceSeismeses.getMonth() - 6);
 
