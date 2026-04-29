@@ -225,6 +225,13 @@ async function buscarProductoEnHistorial(rutLimpio, productoBuscado) {
 console.log("Total filas CSV:", rows.length);
     console.log("Primera fila:", JSON.stringify(rows[0]));
     console.log("RUT buscado:", rutLimpio);
+const rutSinDV = rutLimpio.slice(0, -1);
+const filasConRut = rows.filter(r => 
+  (r["CodAuxGSaen"] || "") === rutLimpio || 
+  (r["CodAuxGSaen"] || "") === rutSinDV
+);
+console.log("Filas encontradas para este RUT:", filasConRut.length);
+if (filasConRut.length > 0) console.log("Ejemplo:", JSON.stringify(filasConRut[0]));
     console.log("Columnas disponibles:", Object.keys(rows[0]));
     const haceSeismeses = new Date();
     haceSeismeses.setMonth(haceSeismeses.getMonth() - 6);
