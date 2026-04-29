@@ -19,14 +19,9 @@ const {
 const sessions = {};
 
 const STEPS = {
-  START:            "start",
-  WAITING_RUT:      "waiting_rut",
-  WAITING_RAZON:    "waiting_razon_social",
-  WAITING_PRODUCTO: "waiting_producto",
-  CONFIRMING:       "confirming",
-  WAITING_CANTIDAD: "waiting_cantidad",
-  WAITING_EMAIL:    "waiting_email",
-  DONE:             "done",
+  START:         "start",
+  WAITING_EMAIL: "waiting_email",
+  DONE:          "done",
 };
 
 // ─── Webhook verificación ─────────────────────────────────────────────────────
@@ -72,140 +67,78 @@ async function handleMessage(phone, text) {
   switch (session.step) {
 
     case STEPS.START:
-      await sendMessage(phone,
-        `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
-        `Para ayudarte con tu cotización necesito algunos datos.\n\n` +
-        `📋 ¿Cuál es tu *RUT*?\n_Ejemplo: 12.345.678-9_`
-      );
-      session.step = STEPS.WAITING_RUT;
-      break;
+      // Intentar extraer RUT y productos del mensaje libre
+      const rutEncontrado = extraerRUT(text);
+      const nombreEncontrado = extraerNombre(text);
 
-    case STEPS.WAITING_RUT:
-      if (!validarRUT(text)) {
-        await sendMessage(phone,
-          `⚠️ El RUT ingresado no es válido.\nPor favor ingrésalo nuevamente.\n_Ejemplo: 12.345.678-9_`
-        );
-        break;
-      }
-      session.data.rut = text.toUpperCase();
-      session.data.rutLimpio = text.replace(/[.\-\s]/g, "");
-      session.step = STEPS.WAITING_RAZON;
-      await sendMessage(phone,
-        `✅ RUT registrado.\n\n🏢 ¿Cuál es la *Razón Social* de tu empresa?`
-      );
-      break;
+      if (rutEncontrado) {
+        // Mensaje libre con RUT incluido
+        session.data.rut = rutEncontrado.formato;
+        session.data.rutLimpio = rutEncontrado.limpio;
+        session.data.rutSinDV = rutEncontrado.sinDV;
+        session.data.nombre = nombreEncontrado || "Cliente";
 
-    case STEPS.WAITING_RAZON:
-      if (text.length < 3) {
-        await sendMessage(phone, `⚠️ Por favor ingresa la razón social completa.`);
-        break;
-      }
-      session.data.razonSocial = text;
-      session.step = STEPS.WAITING_PRODUCTO;
-      await sendMessage(phone,
-        `✅ Empresa registrada.\n\n📦 ¿Qué *producto* necesitas cotizar?\n_Describe el producto o indica el código._`
-      );
-      break;
+        await sendMessage(phone, `👋 ¡Hola ${session.data.nombre}! Estoy procesando tu solicitud...`);
 
-    case STEPS.WAITING_PRODUCTO:
-      if (text.length < 2) {
-        await sendMessage(phone, `⚠️ Por favor describe el producto que necesitas.`);
-        break;
-      }
-      session.data.productoBuscado = text;
-      await sendMessage(phone, `🔍 Buscando en nuestro catálogo...`);
+        // Extraer productos y cantidades del mensaje
+        const productosTexto = extraerProductos(text);
 
-      const historial = await buscarProductoEnHistorial(session.data.rutLimpio, text);
-
-      if (historial && historial.length > 0) {
-        session.data.productosEncontrados = historial;
-        let msg = `📋 Encontré estos productos en tu historial de compras:\n\n`;
-        historial.forEach((p, i) => {
-          msg += `*${i + 1}.* ${p.DesProd}\n`;
-          msg += `   🏷️ Código: ${p.CodProd}\n`;
-          msg += `   💰 Precio: $${parseInt(p.precio).toLocaleString("es-CL")}\n`;
-          msg += `   📅 Última compra: ${p.fecha}\n\n`;
-        });
-        msg += `¿Es alguno de estos el producto que buscas? Responde con el *número* o escribe *no* para buscar otro.`;
-        await sendMessage(phone, msg);
-        session.step = STEPS.CONFIRMING;
+        if (productosTexto.length > 0) {
+          await procesarSolicitudCompleta(phone, session, productosTexto);
+        } else {
+          await sendMessage(phone,
+            `✅ RUT registrado: *${session.data.rut}*\n\n` +
+            `📦 ¿Qué productos necesitas cotizar?\n` +
+            `_Ejemplo: toalla 2 paquetes, lavaloza 5 unidades_`
+          );
+          session.step = STEPS.WAITING_EMAIL;
+        }
       } else {
+        // No encontró RUT, pedir datos
         await sendMessage(phone,
-          `ℹ️ No encontré ese producto en tu historial reciente.\n\n` +
-          `Un representante revisará tu solicitud y te contactará a la brevedad.\n\n` +
-          `📧 ¿Cuál es tu *correo electrónico* para enviarte la cotización?`
+          `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
+          `Puedes escribirme directamente con tu información, por ejemplo:\n\n` +
+          `_"Hola, soy Juan, mi RUT es 12.345.678-9 y necesito toalla 2 paquetes y lavaloza 5 unidades"_\n\n` +
+          `O si prefieres, dime tu *RUT* para comenzar.`
         );
-        session.data.productosEncontrados = [];
         session.step = STEPS.WAITING_EMAIL;
       }
-      break;
-
-    case STEPS.CONFIRMING:
-      const productos = session.data.productosEncontrados;
-      const num = parseInt(text);
-
-      if (text.toLowerCase() === "no") {
-        await sendMessage(phone,
-          `Entendido. Un representante revisará tu solicitud.\n\n` +
-          `📧 ¿Cuál es tu *correo electrónico* para enviarte la cotización?`
-        );
-        session.data.productoSeleccionado = null;
-        session.step = STEPS.WAITING_EMAIL;
-        break;
-      }
-
-      if (isNaN(num) || num < 1 || num > productos.length) {
-        await sendMessage(phone,
-          `⚠️ Por favor responde con un número entre 1 y ${productos.length}, o escribe *no*.`
-        );
-        break;
-      }
-
-      session.data.productoSeleccionado = productos[num - 1];
-      await sendMessage(phone,
-        `✅ Perfecto, seleccionaste:\n*${session.data.productoSeleccionado.DesProd}*\n\n` +
-        `📦 ¿Qué *cantidad* necesitas?`
-      );
-      session.step = STEPS.WAITING_CANTIDAD;
-      break;
-
-    case STEPS.WAITING_CANTIDAD:
-      const cantidad = parseInt(text);
-      if (isNaN(cantidad) || cantidad < 1) {
-        await sendMessage(phone, `⚠️ Por favor ingresa una cantidad válida.`);
-        break;
-      }
-      session.data.cantidad = cantidad;
-      await sendMessage(phone,
-        `✅ Cantidad: *${cantidad} unidades*\n\n` +
-        `📧 ¿Cuál es tu *correo electrónico* para enviarte la cotización?`
-      );
-      session.step = STEPS.WAITING_EMAIL;
       break;
 
     case STEPS.WAITING_EMAIL:
-      if (!text.includes("@") || !text.includes(".")) {
-        await sendMessage(phone, `⚠️ Por favor ingresa un correo electrónico válido.`);
+      // Verificar si es un email
+      if (text.includes("@") && text.includes(".")) {
+        session.data.emailCliente = text.toLowerCase();
+        if (session.data.pendienteEnvio) {
+          await enviarCotizacionCompleta(phone, session.data);
+          session.step = STEPS.DONE;
+        }
         break;
       }
-      session.data.emailCliente = text.toLowerCase();
-      session.step = STEPS.DONE;
 
-      const emailOk = await enviarCotizacion(phone, session.data);
-
-      if (emailOk) {
-        await sendMessage(phone,
-          `✅ ¡Listo! Tu cotización ha sido enviada a *${session.data.emailCliente}*.\n\n` +
-          `Un representante de CINTEC se pondrá en contacto contigo a la brevedad.\n\n` +
-          `¡Gracias por preferirnos! 🙏`
-        );
-      } else {
-        await sendMessage(phone,
-          `⚠️ Hubo un problema al enviar la cotización. Por favor intenta nuevamente.`
-        );
-        delete sessions[phone];
+      // Verificar si hay RUT en el mensaje
+      const rutMsg = extraerRUT(text);
+      if (rutMsg && !session.data.rut) {
+        session.data.rut = rutMsg.formato;
+        session.data.rutLimpio = rutMsg.limpio;
+        session.data.rutSinDV = rutMsg.sinDV;
+        const nombre = extraerNombre(text);
+        if (nombre) session.data.nombre = nombre;
       }
-      setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
+
+      // Si tiene RUT, extraer productos
+      if (session.data.rut) {
+        const productos = extraerProductos(text);
+        if (productos.length > 0) {
+          await procesarSolicitudCompleta(phone, session, productos);
+          break;
+        }
+      }
+
+      await sendMessage(phone,
+        `Por favor escríbeme tu solicitud incluyendo tu RUT y los productos que necesitas.\n\n` +
+        `_Ejemplo: "Mi RUT es 12.345.678-9 y necesito toalla 2 paquetes y lavaloza 5 unidades"_`
+      );
       break;
 
     case STEPS.DONE:
@@ -216,180 +149,374 @@ async function handleMessage(phone, text) {
   }
 }
 
-// ─── Buscar producto en Google Sheets ────────────────────────────────────────
-async function buscarProductoEnHistorial(rutLimpio, productoBuscado) {
-  try {
-    const resp = await axios.get(process.env.GOOGLE_SHEETS_CSV_URL);
-    const rows = parse(resp.data, { columns: true, skip_empty_lines: true });
+// ─── Procesar solicitud completa ──────────────────────────────────────────────
+async function procesarSolicitudCompleta(phone, session, productosTexto) {
+  await sendMessage(phone, `🔍 Buscando productos en nuestro catálogo...`);
 
-console.log("Total filas CSV:", rows.length);
-    console.log("Primera fila:", JSON.stringify(rows[0]));
-    console.log("RUT buscado:", rutLimpio);
-const rutSinDV = rutLimpio.slice(0, -1);
-const filasConRut = rows.filter(r => 
-  (r["CodAuxGSaen"] || "") === rutLimpio || 
-  (r["CodAuxGSaen"] || "") === rutSinDV
-);
-console.log("Filas encontradas para este RUT:", filasConRut.length);
-// Debug filtros
-const hoy = new Date();
-const seismeses = new Date();
-seismeses.setMonth(hoy.getMonth() - 6);
-filasConRut.forEach((row, i) => {
-  const fechaStr = row["Fecha Ult. Vta"] || "";
-  const parts = fechaStr.split("/");
-  const fecha = parts.length === 3 ? new Date(`${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}`) : new Date(fechaStr);
+  // Cargar CSV una vez
+  const rows = await cargarCSV();
+  if (!rows) {
+    await sendMessage(phone, `⚠️ Error al acceder al catálogo. Por favor intenta nuevamente.`);
+    return;
+  }
+
+  const productosConPrecio = [];
+  const productosSinMargen = [];
+  const productosNoEncontrados = [];
+
+  for (const item of productosTexto) {
+    const resultado = buscarProducto(rows, session.data.rutSinDV, item.nombre);
+
+    if (resultado.encontrado) {
+      productosConPrecio.push({
+        ...resultado.producto,
+        cantidadSolicitada: item.cantidad,
+        unidad: item.unidad,
+      });
+    } else if (resultado.bajoMargen) {
+      productosSinMargen.push({
+        nombre: item.nombre,
+        cantidad: item.cantidad,
+        unidad: item.unidad,
+        producto: resultado.producto,
+      });
+    } else {
+      productosNoEncontrados.push(item.nombre);
+    }
+  }
+
+  session.data.productosConPrecio = productosConPrecio;
+  session.data.productosSinMargen = productosSinMargen;
+  session.data.productosNoEncontrados = productosNoEncontrados;
+
+  // Armar respuesta al cliente
+  let respuesta = "";
+
+  if (productosConPrecio.length > 0) {
+    respuesta += `✅ *Productos disponibles para cotizar:*\n\n`;
+    let total = 0;
+    productosConPrecio.forEach((p, i) => {
+      const subtotal = p.precio * p.cantidadSolicitada;
+      total += subtotal;
+      respuesta += `*${i + 1}. ${p.DesProd}*\n`;
+      respuesta += `   🏷️ Código: ${p.CodProd}\n`;
+      respuesta += `   💰 Precio: $${p.precio.toLocaleString("es-CL")}\n`;
+      respuesta += `   📦 Cantidad: ${p.cantidadSolicitada} ${p.unidad}\n`;
+      respuesta += `   💵 Subtotal: $${subtotal.toLocaleString("es-CL")}\n\n`;
+    });
+    respuesta += `*💵 TOTAL: $${total.toLocaleString("es-CL")}*\n\n`;
+  }
+
+  if (productosSinMargen.length > 0) {
+    respuesta += `⚠️ *Los siguientes productos requieren actualización de precios:*\n`;
+    productosSinMargen.forEach(p => {
+      respuesta += `• ${p.nombre} (${p.cantidad} ${p.unidad})\n`;
+    });
+    respuesta += `_Un representante te contactará a la brevedad con los precios actualizados._\n\n`;
+  }
+
+  if (productosNoEncontrados.length > 0) {
+    respuesta += `ℹ️ *No encontramos historial de:*\n`;
+    productosNoEncontrados.forEach(p => {
+      respuesta += `• ${p}\n`;
+    });
+    respuesta += `_Un representante revisará disponibilidad._\n\n`;
+  }
+
+  if (productosConPrecio.length > 0) {
+    respuesta += `📧 ¿A qué *correo electrónico* te enviamos la cotización?`;
+    session.data.pendienteEnvio = true;
+    session.step = STEPS.WAITING_EMAIL;
+  } else {
+    respuesta += `📧 Un representante se pondrá en contacto contigo a la brevedad.`;
+    session.step = STEPS.DONE;
+    // Notificar internamente
+    await notificarInterno(phone, session.data);
+  }
+
+  await sendMessage(phone, respuesta);
+
+  // Notificar productos sin margen al correo interno
+  if (productosSinMargen.length > 0) {
+    await notificarBajoMargen(phone, session.data, productosSinMargen);
+  }
+}
+
+// ─── Buscar producto en CSV ───────────────────────────────────────────────────
+function buscarProducto(rows, rutSinDV, nombreBuscado) {
+  const haceSeismeses = new Date();
+  haceSeismeses.setMonth(haceSeismeses.getMonth() - 6);
+
+  const keywords = nombreBuscado.toLowerCase().split(" ").filter(w => w.length > 2);
+
+  // Filtrar por RUT
+  const filasCliente = rows.filter(row => {
+    const rutRow = (row["CodAuxGSaen"] || "").replace(/[.\-\s]/g, "");
+    return rutRow === rutSinDV;
+  });
+
+  // Filtrar por producto
+  const filasProducto = filasCliente.filter(row => {
+    const desc = (row["DesProd"] || "").toLowerCase();
+    const cod  = (row["CodProd"] || "").toLowerCase();
+    return keywords.some(k => desc.includes(k) || cod.includes(k));
+  });
+
+  if (filasProducto.length === 0) return { encontrado: false, bajoMargen: false };
+
+  // Filtrar por fecha y margen
+  const filasValidas = filasProducto.filter(row => {
+    const fechaStr = row["Fecha Ult. Vta"] || "";
+    const parts = fechaStr.split("/");
+    const fecha = parts.length === 3
+      ? new Date(`${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}`)
+      : new Date(fechaStr);
+
+    const precio = parseFloat((row["Ultimo Precio"] || "0").replace(/[$.\s]/g,"").replace(",","."));
+    const costo  = parseFloat((row["Costo Vta"] || "0").replace(/[$.\s]/g,"").replace(",",".")) || 0;
+    const margen = precio > 0 ? (precio - costo) / precio : 0;
+
+    return fecha >= haceSeismeses && margen >= 0.20;
+  });
+
+  if (filasValidas.length > 0) {
+    const row = filasValidas[0];
+    const precio = parseFloat((row["Ultimo Precio"] || "0").replace(/[$.\s]/g,"").replace(",","."));
+    return {
+      encontrado: true,
+      bajoMargen: false,
+      producto: {
+        CodProd: row["CodProd"],
+        DesProd: row["DesProd"],
+        precio,
+        fecha: row["Fecha Ult. Vta"],
+      }
+    };
+  }
+
+  // Existe el producto pero tiene bajo margen o fecha vencida
+  const row = filasProducto[0];
   const precio = parseFloat((row["Ultimo Precio"] || "0").replace(/[$.\s]/g,"").replace(",","."));
-  const costo = parseFloat((row["Costo Vta"] || "0").replace(/[$.\s]/g,"").replace(",",".")) || 0;
+  const costo  = parseFloat((row["Costo Vta"] || "0").replace(/[$.\s]/g,"").replace(",",".")) || 0;
   const margen = precio > 0 ? (precio - costo) / precio : 0;
-  const desc = (row["DesProd"] || "").toLowerCase();
-  console.log(`Fila ${i}: ${desc} | fecha: ${fechaStr} | margen: ${(margen*100).toFixed(1)}% | fechaOk: ${fecha >= seismeses} | margenOk: ${margen >= 0.20}`);
-});
-if (filasConRut.length > 0) console.log("Ejemplo:", JSON.stringify(filasConRut[0]));
-    console.log("Columnas disponibles:", Object.keys(rows[0]));
-    const haceSeismeses = new Date();
-    haceSeismeses.setMonth(haceSeismeses.getMonth() - 6);
+  const esBajoMargen = margen < 0.20;
 
-    const keywords = productoBuscado.toLowerCase().split(" ").filter(w => w.length > 2);
+  return {
+    encontrado: false,
+    bajoMargen: esBajoMargen,
+    producto: {
+      CodProd: row["CodProd"],
+      DesProd: row["DesProd"],
+      precio,
+      margen: (margen * 100).toFixed(1),
+    }
+  };
+}
 
-    const resultados = rows.filter(row => {
-      // Filtrar por RUT (sin puntos ni guión)
-      const rutRow = (row["CodAuxGSaen"] || "").replace(/[.\-\s]/g, "");
-const rutSinDV = rutLimpio.slice(0, -1); // Sin dígito verificador
-const rutMatch = rutRow === rutLimpio || rutRow === rutSinDV;
-
-      // Filtrar por fecha últimos 6 meses
-      const fechaStr = row["Fecha Ult. Vta"] || row["Fecha"] || "";
-      // Parsear fecha en formato DD-MM-YYYY o DD/MM/YYYY
-      let fecha;
-      if (fechaStr.includes("-") || fechaStr.includes("/")) {
-        const sep = fechaStr.includes("-") ? "-" : "/";
-        const parts = fechaStr.split(sep);
-        if (parts[0].length === 2) {
-          // Formato DD-MM-YYYY
-          fecha = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
-        } else {
-          fecha = new Date(fechaStr);
-        }
-      } else {
-        fecha = new Date(fechaStr);
-      }
-      const fechaOk = fecha >= haceSeismeses;
-
-      // Calcular margen: (PrecioVta - Costo) / PrecioVta
-      const precio = parseFloat((row["Ultimo Precio"] || "0").replace(/[$.,]/g, "").replace(",", "."));
-      const costo  = parseFloat((row["Costo Vta"] || "0").replace(/[$.,]/g, "").replace(",", "."));
-      const margen = precio > 0 ? (precio - costo) / precio : 0;
-      const margenOk = margen >= 0.20;
-
-      // Filtrar por producto buscado
-      const desc = (row["DesProd"] || "").toLowerCase();
-      const cod  = (row["CodProd"] || "").toLowerCase();
-      const prodMatch = keywords.some(k => desc.includes(k) || cod.includes(k));
-
-      return rutMatch && fechaOk && margenOk && prodMatch;
-    });
-
-    // Eliminar duplicados por CodProd y quedarse con el más reciente
-    const unicos = {};
-    resultados.forEach(row => {
-      const cod = row["CodProd"];
-      if (!unicos[cod]) {
-        unicos[cod] = {
-          CodProd:  row["CodProd"],
-          DesProd:  row["DesProd"],
-          precio:   row["Ultimo Precio"].replace(/[$\s]/g, ""),
-          fecha:    row["Fecha Ult. Vta"] || row["Fecha"],
-        };
-      }
-    });
-
-    return Object.values(unicos).slice(0, 5);
+// ─── Cargar CSV desde Google Sheets ──────────────────────────────────────────
+async function cargarCSV() {
+  try {
+    const resp = await axios.get(GOOGLE_SHEETS_CSV_URL);
+    return parse(resp.data, { columns: true, skip_empty_lines: true });
   } catch (err) {
-    console.error("Error leyendo Google Sheets:", err.message);
+    console.error("Error cargando CSV:", err.message);
     return null;
   }
 }
 
-// ─── Enviar cotización por email ──────────────────────────────────────────────
-async function enviarCotizacion(phone, data) {
-  try {
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    const fecha  = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
-    const prod   = data.productoSeleccionado;
+// ─── Extraer RUT del texto ────────────────────────────────────────────────────
+function extraerRUT(texto) {
+  const match = texto.match(/\b(\d{7,8}[-.]?\d)\b/);
+  if (!match) return null;
+  const raw = match[1].replace(/[.\-\s]/g, "");
+  if (!validarRUT(match[1])) return null;
+  return {
+    formato: match[1].toUpperCase(),
+    limpio:  raw,
+    sinDV:   raw.slice(0, -1),
+  };
+}
 
-    const detalleProducto = prod
-      ? `
-        <table style="width:100%; border-collapse:collapse; margin-top:10px;">
-          <tr style="background:#f2f2f2;">
-            <td style="padding:8px; font-weight:bold;">Código</td>
-            <td style="padding:8px; font-weight:bold;">Descripción</td>
-            <td style="padding:8px; font-weight:bold;">Precio Unit.</td>
-            <td style="padding:8px; font-weight:bold;">Cantidad</td>
-            <td style="padding:8px; font-weight:bold;">Total</td>
-          </tr>
-          <tr>
-            <td style="padding:8px;">${prod.CodProd}</td>
-            <td style="padding:8px;">${prod.DesProd}</td>
-            <td style="padding:8px;">$${parseInt(prod.precio).toLocaleString("es-CL")}</td>
-            <td style="padding:8px;">${data.cantidad}</td>
-            <td style="padding:8px;">$${(parseInt(prod.precio) * data.cantidad).toLocaleString("es-CL")}</td>
-          </tr>
-        </table>`
-      : `<p>Producto solicitado: <strong>${data.productoBuscado}</strong><br>
-         <em>Un representante revisará disponibilidad y precio.</em></p>`;
+// ─── Extraer nombre del texto ─────────────────────────────────────────────────
+function extraerNombre(texto) {
+  const match = texto.match(/(?:soy|me llamo|mi nombre es)\s+([A-Za-záéíóúÁÉÍÓÚñÑ]+(?:\s+[A-Za-záéíóúÁÉÍÓÚñÑ]+)?)/i);
+  return match ? match[1] : null;
+}
+
+// ─── Extraer productos y cantidades del texto ─────────────────────────────────
+function extraerProductos(texto) {
+  const productos = [];
+  // Patrones: "toalla 2 paquetes", "lavaloza 10 unidades", "papel 3"
+  const patron = /([a-záéíóúñA-ZÁÉÍÓÚÑ\s]+?)\s+(\d+)\s*(paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|cja|bolsas?|rollos?|pares?)?(?=[,y]|$)/gi;
+  let match;
+  while ((match = patron.exec(texto)) !== null) {
+    const nombre = match[1].trim().toLowerCase();
+    const cantidad = parseInt(match[2]);
+    const unidad = match[3] || "unidades";
+    // Filtrar palabras irrelevantes
+    if (nombre.length > 2 && !["hola", "soy", "necesito", "quiero", "nombre", "rut", "mi", "es"].includes(nombre)) {
+      productos.push({ nombre, cantidad, unidad });
+    }
+  }
+  return productos;
+}
+
+// ─── Enviar cotización completa ───────────────────────────────────────────────
+async function enviarCotizacionCompleta(phone, data) {
+  try {
+    const resend = new Resend(RESEND_API_KEY);
+    const fecha  = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+    const productos = data.productosConPrecio;
+
+    let filasProductos = "";
+    let total = 0;
+    productos.forEach(p => {
+      const subtotal = p.precio * p.cantidadSolicitada;
+      total += subtotal;
+      filasProductos += `
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid #eee;">${p.CodProd}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">${p.DesProd}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">$${p.precio.toLocaleString("es-CL")}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee; text-align:center;">${p.cantidadSolicitada} ${p.unidad}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">$${subtotal.toLocaleString("es-CL")}</td>
+        </tr>`;
+    });
+
+    const htmlCliente = `
+      <div style="font-family:Arial,sans-serif; max-width:650px; margin:auto; padding:24px; border:1px solid #e0e0e0; border-radius:8px;">
+        <div style="background:#c0392b; padding:16px; border-radius:8px 8px 0 0; text-align:center;">
+          <h2 style="color:white; margin:0;">COTIZACIÓN CINTEC</h2>
+        </div>
+        <div style="padding:20px;">
+          <p>Estimado/a <strong>${data.nombre || data.rut}</strong>,</p>
+          <p>A continuación le presentamos nuestra cotización:</p>
+          <p><strong>Fecha:</strong> ${fecha} &nbsp;&nbsp; <strong>RUT:</strong> ${data.rut}</p>
+          <table style="width:100%; border-collapse:collapse; margin-top:10px;">
+            <tr style="background:#c0392b; color:white;">
+              <th style="padding:8px;">Código</th>
+              <th style="padding:8px;">Descripción</th>
+              <th style="padding:8px; text-align:right;">Precio Unit.</th>
+              <th style="padding:8px; text-align:center;">Cantidad</th>
+              <th style="padding:8px; text-align:right;">Subtotal</th>
+            </tr>
+            ${filasProductos}
+            <tr style="background:#f9f9f9; font-weight:bold;">
+              <td colspan="4" style="padding:8px; text-align:right;">TOTAL:</td>
+              <td style="padding:8px; text-align:right;">$${total.toLocaleString("es-CL")}</td>
+            </tr>
+          </table>
+          <hr style="margin:20px 0;"/>
+          <p style="color:#555; font-size:12px;">Esta cotización tiene una vigencia de 30 días.</p>
+          <p style="color:#555; font-size:12px;">CINTEC - Sociedad Comercial</p>
+        </div>
+      </div>`;
 
     // Email al cliente
     await resend.emails.send({
       from: "CINTEC <onboarding@resend.dev>",
       to: data.emailCliente,
-      subject: `Cotización CINTEC - ${data.razonSocial}`,
-      html: `
-        <div style="font-family:Arial,sans-serif; max-width:600px; margin:auto; padding:24px; border:1px solid #e0e0e0; border-radius:8px;">
-          <div style="background:#c0392b; padding:16px; border-radius:8px 8px 0 0; text-align:center;">
-            <h2 style="color:white; margin:0;">COTIZACIÓN CINTEC</h2>
-          </div>
-          <div style="padding:20px;">
-            <p>Estimado/a <strong>${data.razonSocial}</strong>,</p>
-            <p>A continuación le presentamos nuestra cotización según lo solicitado:</p>
-            <p><strong>Fecha:</strong> ${fecha}</p>
-            ${detalleProducto}
-            <hr style="margin:20px 0;"/>
-            <p style="color:#555; font-size:12px;">Esta cotización tiene una vigencia de 30 días. Para confirmar su pedido, responda este correo o contáctenos directamente.</p>
-            <p style="color:#555; font-size:12px;">CINTEC - Sociedad Comercial</p>
-          </div>
-        </div>`
+      subject: `Cotización CINTEC - ${fecha}`,
+      html: htmlCliente,
     });
 
-    // Email de notificación interno
+    // Email interno
     await resend.emails.send({
       from: "Bot CINTEC <onboarding@resend.dev>",
       to: DESTINATION_EMAIL,
-      subject: `📦 Nueva cotización enviada - ${data.razonSocial}`,
+      subject: `📦 Cotización enviada - ${data.nombre || data.rut}`,
       html: `
         <div style="font-family:Arial,sans-serif; max-width:600px; margin:auto; padding:24px; border:1px solid #e0e0e0; border-radius:8px;">
-          <h2 style="color:#c0392b;">📲 Nueva cotización vía WhatsApp</h2>
+          <h2 style="color:#c0392b;">📲 Cotización enviada vía WhatsApp</h2>
           <p><strong>Fecha:</strong> ${fecha}</p>
-          <table style="width:100%; border-collapse:collapse;">
-            <tr><td style="padding:8px; background:#f9f9f9; font-weight:bold;">📞 WhatsApp</td><td style="padding:8px;">+${phone}</td></tr>
-            <tr><td style="padding:8px; font-weight:bold;">🪪 RUT</td><td style="padding:8px;">${data.rut}</td></tr>
-            <tr><td style="padding:8px; background:#f9f9f9; font-weight:bold;">🏢 Empresa</td><td style="padding:8px; background:#f9f9f9;">${data.razonSocial}</td></tr>
-            <tr><td style="padding:8px; font-weight:bold;">📧 Email cliente</td><td style="padding:8px;">${data.emailCliente}</td></tr>
-            <tr><td style="padding:8px; background:#f9f9f9; font-weight:bold;">📦 Producto solicitado</td><td style="padding:8px; background:#f9f9f9;">${data.productoBuscado}</td></tr>
-            ${prod ? `<tr><td style="padding:8px; font-weight:bold;">✅ Producto cotizado</td><td style="padding:8px;">${prod.CodProd} - ${prod.DesProd}</td></tr>
-            <tr><td style="padding:8px; background:#f9f9f9; font-weight:bold;">💰 Precio</td><td style="padding:8px; background:#f9f9f9;">$${parseInt(prod.precio).toLocaleString("es-CL")}</td></tr>
-            <tr><td style="padding:8px; font-weight:bold;">📦 Cantidad</td><td style="padding:8px;">${data.cantidad} unidades</td></tr>
-            <tr><td style="padding:8px; background:#f9f9f9; font-weight:bold;">💵 Total</td><td style="padding:8px; background:#f9f9f9;">$${(parseInt(prod.precio) * data.cantidad).toLocaleString("es-CL")}</td></tr>` : ""}
-          </table>
-          <p style="color:#888; font-size:12px; margin-top:16px;">Cotización enviada al cliente en ${fecha}</p>
+          <p><strong>RUT:</strong> ${data.rut}</p>
+          <p><strong>Cliente:</strong> ${data.nombre || "-"}</p>
+          <p><strong>Email cliente:</strong> ${data.emailCliente}</p>
+          <p><strong>WhatsApp:</strong> +${phone}</p>
+          ${htmlCliente}
         </div>`
     });
 
-    console.log(`📧 Cotización enviada a ${data.emailCliente} para ${data.razonSocial}`);
+    console.log(`📧 Cotización enviada a ${data.emailCliente}`);
+
+    await sendMessage(phone,
+      `✅ ¡Listo! Tu cotización fue enviada a *${data.emailCliente}*.\n\n` +
+      `¡Gracias por preferirnos! Si necesitas algo más escribe *hola*. 🙏`
+    );
     return true;
   } catch (err) {
     console.error("Error enviando cotización:", err.message);
     return false;
+  }
+}
+
+// ─── Notificar bajo margen al correo interno ──────────────────────────────────
+async function notificarBajoMargen(phone, data, productosSinMargen) {
+  try {
+    const resend = new Resend(RESEND_API_KEY);
+    const fecha  = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+
+    let filas = "";
+    productosSinMargen.forEach(p => {
+      filas += `
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid #eee;">${p.producto?.CodProd || "-"}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">${p.producto?.DesProd || p.nombre}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee; text-align:center;">${p.cantidad} ${p.unidad}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#e74c3c;">${p.producto?.margen || "-"}%</td>
+        </tr>`;
+    });
+
+    await resend.emails.send({
+      from: "Bot CINTEC <onboarding@resend.dev>",
+      to: DESTINATION_EMAIL,
+      subject: `⚠️ Productos con bajo margen - ${data.nombre || data.rut}`,
+      html: `
+        <div style="font-family:Arial,sans-serif; max-width:600px; margin:auto; padding:24px; border:1px solid #e74c3c; border-radius:8px;">
+          <h2 style="color:#e74c3c;">⚠️ Productos no cotizados por bajo margen</h2>
+          <p><strong>Fecha:</strong> ${fecha}</p>
+          <p><strong>Cliente:</strong> ${data.nombre || "-"} | RUT: ${data.rut}</p>
+          <p><strong>WhatsApp:</strong> +${phone}</p>
+          <p>Los siguientes productos fueron solicitados pero <strong>no se cotizaron</strong> porque el margen es inferior al 20%. Requieren revisión del área de análisis:</p>
+          <table style="width:100%; border-collapse:collapse; margin-top:10px;">
+            <tr style="background:#e74c3c; color:white;">
+              <th style="padding:8px;">Código</th>
+              <th style="padding:8px;">Producto</th>
+              <th style="padding:8px;">Cantidad</th>
+              <th style="padding:8px;">Margen actual</th>
+            </tr>
+            ${filas}
+          </table>
+          <p style="margin-top:16px; color:#555;">Por favor contactar al cliente para informar actualización de precios.</p>
+        </div>`
+    });
+
+    console.log(`⚠️ Notificación bajo margen enviada para ${data.rut}`);
+  } catch (err) {
+    console.error("Error notificando bajo margen:", err.message);
+  }
+}
+
+// ─── Notificar interno sin cotización ────────────────────────────────────────
+async function notificarInterno(phone, data) {
+  try {
+    const resend = new Resend(RESEND_API_KEY);
+    const fecha  = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+    await resend.emails.send({
+      from: "Bot CINTEC <onboarding@resend.dev>",
+      to: DESTINATION_EMAIL,
+      subject: `📋 Solicitud sin cotización - ${data.nombre || data.rut}`,
+      html: `
+        <div style="font-family:Arial,sans-serif; max-width:600px; margin:auto; padding:24px;">
+          <h2>📋 Solicitud recibida sin productos para cotizar</h2>
+          <p><strong>Fecha:</strong> ${fecha}</p>
+          <p><strong>Cliente:</strong> ${data.nombre || "-"} | RUT: ${data.rut}</p>
+          <p><strong>WhatsApp:</strong> +${phone}</p>
+          <p>El cliente fue informado que un representante lo contactará.</p>
+        </div>`
+    });
+  } catch (err) {
+    console.error("Error notificando interno:", err.message);
   }
 }
 
