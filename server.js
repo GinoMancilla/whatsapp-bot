@@ -233,8 +233,9 @@ console.log("Total filas CSV:", rows.length);
 
     const resultados = rows.filter(row => {
       // Filtrar por RUT (sin puntos ni guión)
-      const rutRow = (row["codauxgsaen"] || "").replace(/[.\-\s]/g, "");
-      const rutMatch = rutRow === rutLimpio;
+      const rutRow = (row["CodAuxGSaen"] || "").replace(/[.\-\s]/g, "");
+const rutSinDV = rutLimpio.slice(0, -1); // Sin dígito verificador
+const rutMatch = rutRow === rutLimpio || rutRow === rutSinDV;
 
       // Filtrar por fecha últimos 6 meses
       const fechaStr = row["Fecha Ult. Vta"] || row["Fecha"] || "";
