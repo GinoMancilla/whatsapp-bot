@@ -574,8 +574,13 @@ async function renovarToken() {
   }
 }
 
-// Ejecutar cada 50 días
-setInterval(renovarToken, CINCUENTA_DIAS);
+// Ejecutar cada 50 días (sin ejecutar al inicio)
+setTimeout(() => {
+  renovarToken(); // Primera renovación a los 50 días
+  setInterval(renovarToken, CINCUENTA_DIAS); // Luego cada 50 días
+}, CINCUENTA_DIAS);
+
+console.log("⏰ Renovación automática programada para 50 días.");
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
