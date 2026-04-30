@@ -490,6 +490,92 @@ function validarRUT(rut) {
 }
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
+
+// ─── Renovación automática del token cada 50 días ─────────────────────────
+const CINCUENTA_DIAS = 50 * 24 * 60 * 60 * 1000;
+
+async function renovarToken() {
+  try {
+    console.log("🔄 Iniciando renovación automática del token...");
+
+    // Obtener token actual de las variables de Railway
+    const tokenActual = process.env.WHATSAPP_TOKEN;
+
+    // Extender el token a 60 días
+    const resp = await axios.get("https://graph.facebook.com/oauth/access_token", {
+      params: {
+        grant_type: "fb_exchange_token",
+        client_id: process.env.META_APP_ID,
+        client_secret: process.env.META_APP_SECRET,
+        fb_exchange_token: tokenActual,
+      }
+    });
+
+    const nuevoToken = resp.data.access_token;
+
+    // Actualizar variable en Railway via API
+    await axios.post(
+      `https://backboard.railway.app/graphql/v2`,
+      {
+        query: `
+          mutation {
+            variableUpsert(input: {
+              serviceId: "${process.env.RAILWAY_SERVICE_ID}"
+              environmentId: "${process.env.RAILWAY_ENVIRONMENT_ID}"
+              name: "WHATSAPP_TOKEN"
+              value: "${nuevoToken}"
+            })
+          }
+        `
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.RAILWAY_API_TOKEN}`,
+          "Content-Type": "application/json",
+        }
+      }
+    );
+
+    // Actualizar en memoria
+    process.env.WHATSAPP_TOKEN = nuevoToken;
+
+    // Notificar por correo
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    await resend.emails.send({
+      from: "Bot CINTEC <onboarding@resend.dev>",
+      to: process.env.DESTINATION_EMAIL,
+      subject: "✅ Token WhatsApp renovado automáticamente",
+      html: `
+        <div style="font-family:Arial,sans-serif; padding:24px; border:1px solid #27AE60; border-radius:8px;">
+          <h2 style="color:#27AE60;">✅ Token renovado exitosamente</h2>
+          <p>El token de WhatsApp fue renovado automáticamente el <strong>${new Date().toLocaleString("es-CL", {timeZone:"America/Santiago"})}</strong></p>
+          <p>Próxima renovación en <strong>50 días</strong>.</p>
+          <p style="color:#888; font-size:12px;">Este proceso es automático, no se requiere ninguna acción.</p>
+        </div>`
+    });
+
+    console.log("✅ Token renovado automáticamente y correo enviado.");
+  } catch (err) {
+    console.error("❌ Error renovando token:", err.response?.data || err.message);
+
+    // Notificar error por correo
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    await resend.emails.send({
+      from: "Bot CINTEC <onboarding@resend.dev>",
+      to: process.env.DESTINATION_EMAIL,
+      subject: "❌ Error al renovar token WhatsApp",
+      html: `
+        <div style="font-family:Arial,sans-serif; padding:24px; border:1px solid #E74C3C; border-radius:8px;">
+          <h2 style="color:#E74C3C;">❌ Error en renovación automática</h2>
+          <p>No se pudo renovar el token automáticamente. Por favor renuévalo manualmente.</p>
+          <p><strong>Error:</strong> ${err.message}</p>
+        </div>`
+    });
+  }
+}
+
+// Ejecutar cada 50 días
+setInterval(renovarToken, CINCUENTA_DIAS);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
