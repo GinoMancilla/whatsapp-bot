@@ -37,6 +37,14 @@ function normalizar(str) {
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
+// Palabras de envase que no deben usarse como keyword de producto
+const STOP_WORDS_ENVASE = new Set([
+  "bidon", "bidones", "bolsa", "bolsas", "saco", "sacos",
+  "caja", "cajas", "frasco", "frascos", "tarro", "tarros",
+  "balde", "baldes", "tambor", "tambores", "galon", "galones",
+  "envase", "envases", "botella", "botellas", "de",
+]);
+
 // ─── Abreviar proveedor ───────────────────────────────────────────────────────
 function abreviarProveedor(proveedor) {
   if (!proveedor) return "-";
@@ -235,7 +243,8 @@ async function buscarParaClienteExistente(phone, session, item) {
 
 // ─── Buscar para cliente nuevo (catálogo completo, Precio Lista) ──────────────
 async function buscarParaClienteNuevo(phone, session, item) {
-  const keywords = normalizar(item.nombre).split(" ").filter(w => w.length > 2);
+  const keywords = normalizar(item.nombre).split(" ")
+    .filter(w => w.length > 2 && !STOP_WORDS_ENVASE.has(w));
 
   // Buscar en todo el catálogo
   const encontrados = buscarEnCatalogo(session.data.rows, keywords);
@@ -384,13 +393,19 @@ async function manejarEleccionOpcion(phone, session, text) {
 // ─── Manejar "¿necesitas algo más?" ──────────────────────────────────────────
 async function manejarMasProductos(phone, session, text) {
   const textNorm = normalizar(text);
-  if (/^(si|sí|s|yes|ok|claro|bueno)$/i.test(textNorm)) {
+  if (/^(no|n|nop|listo|eso es todo|eso|fin)$/i.test(textNorm)) {
+    await mostrarResumenFinal(phone, session);
+  } else if (/^(si|sí|s|yes|ok|claro|bueno)$/i.test(textNorm)) {
     session.step = STEPS.WAITING_PRODUTOS;
     await sendMessage(phone,
       `📦 ¿Qué más necesitas?\n_Indica producto y cantidad:_\n_"papel higienico 3 paquetes"_`
     );
   } else {
-    await mostrarResumenFinal(phone, session);
+    // El cliente escribió directamente un producto en vez de sí/no
+    session.data.textoProductos = text;
+    session.data.itemsPendientes = parsearProductos(text);
+    await sendMessage(phone, `🔍 Buscando en nuestro catálogo...`);
+    await procesarSiguienteProducto(phone, session);
   }
 }
 
