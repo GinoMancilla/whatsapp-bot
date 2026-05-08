@@ -26,6 +26,7 @@ const STEPS = {
   CONFIRMANDO:        "confirmando",
   WAITING_FORMATO:    "waiting_formato",
   ELIGIENDO_OPCION:   "eligiendo_opcion",
+  WAITING_CANTIDAD:   "waiting_cantidad",
   WAITING_MAS:        "waiting_mas",
   WAITING_EMAIL:      "waiting_email",
   DONE:               "done",
@@ -145,6 +146,10 @@ async function handleMessage(phone, text) {
 
     case STEPS.ELIGIENDO_OPCION:
       await manejarEleccionOpcion(phone, session, text);
+      break;
+
+    case STEPS.WAITING_CANTIDAD:
+      await manejarCantidad(phone, session, text);
       break;
 
     case STEPS.WAITING_MAS:
@@ -332,6 +337,7 @@ async function manejarEleccionOpcion(phone, session, text) {
   const lista = session.data.opcionesActuales;
   const item  = session.data.itemActual;
   const textNorm = normalizar(text);
+  const cantidadAntes = session.data.productosConfirmados.length;
 
   if (textNorm === "todos" || textNorm === "todas") {
     // Agregar todos
@@ -381,13 +387,43 @@ async function manejarEleccionOpcion(phone, session, text) {
 
   session.data.itemsPendientes.shift();
 
-  // Preguntar si necesita algo más
+  // Si el cliente no especificó cantidad, pedirla ahora
+  if (!item.cantidadEspecificada) {
+    session.step = STEPS.WAITING_CANTIDAD;
+    session.data.cantidadPendienteCount = session.data.productosConfirmados.length - cantidadAntes;
+    const plural = session.data.cantidadPendienteCount > 1 ? "cada presentación" : "este producto";
+    await sendMessage(phone, `📦 ¿Cuántas unidades necesitas de ${plural}?`);
+    return;
+  }
+
+  await continuarTrasEleccion(phone, session);
+}
+
+async function continuarTrasEleccion(phone, session) {
   if (session.data.itemsPendientes.length === 0) {
     session.step = STEPS.WAITING_MAS;
     await sendMessage(phone, `¿Necesitas cotizar algo más? Responde *sí* para agregar productos o *no* para continuar.`);
   } else {
     await procesarSiguienteProducto(phone, session);
   }
+}
+
+// ─── Manejar cantidad cuando no fue especificada ──────────────────────────────
+async function manejarCantidad(phone, session, text) {
+  const num = parseInt(text);
+  if (isNaN(num) || num < 1) {
+    await sendMessage(phone, `⚠️ Ingresa una cantidad válida (número mayor a 0).`);
+    return;
+  }
+
+  const count = session.data.cantidadPendienteCount || 1;
+  const confirmados = session.data.productosConfirmados;
+  for (let i = confirmados.length - count; i < confirmados.length; i++) {
+    confirmados[i].cantidad = num;
+  }
+
+  await sendMessage(phone, `✅ Cantidad registrada: *${num} unidades*.`);
+  await continuarTrasEleccion(phone, session);
 }
 
 // ─── Manejar "¿necesitas algo más?" ──────────────────────────────────────────
@@ -475,6 +511,13 @@ async function manejarConfirmacion(phone, session, text) {
 
 // ─── Siguiente paso tras confirmación ────────────────────────────────────────
 async function siguientePasoTrasConfirmacion(phone, session) {
+  const item = session.data.itemActual;
+  if (!item.cantidadEspecificada) {
+    session.step = STEPS.WAITING_CANTIDAD;
+    session.data.cantidadPendienteCount = 1;
+    await sendMessage(phone, `📦 ¿Cuántas unidades necesitas de este producto?`);
+    return;
+  }
   if (session.data.itemsPendientes.length === 0) {
     session.step = STEPS.WAITING_MAS;
     await sendMessage(phone, `¿Necesitas cotizar algo más? Responde *sí* o *no*.`);
@@ -614,13 +657,13 @@ function parsearProductos(texto) {
     const matchInicio = parte.match(/^(\d+)\s*(paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?)?\s+(.+)$/i);
     if (matchFinal) {
       const nombre = normalizar(matchFinal[1]);
-      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchFinal[2]), unidad: matchFinal[3] || "unidades" });
+      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchFinal[2]), unidad: matchFinal[3] || "unidades", cantidadEspecificada: true });
     } else if (matchInicio) {
       const nombre = normalizar(matchInicio[3]);
-      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchInicio[1]), unidad: matchInicio[2] || "unidades" });
+      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchInicio[1]), unidad: matchInicio[2] || "unidades", cantidadEspecificada: true });
     } else {
       const nombre = normalizar(parte);
-      if (nombre.length > 2) items.push({ nombre, cantidad: 1, unidad: "unidades" });
+      if (nombre.length > 2) items.push({ nombre, cantidad: 1, unidad: "unidades", cantidadEspecificada: false });
     }
   });
 

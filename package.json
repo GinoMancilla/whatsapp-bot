@@ -16,6 +16,7 @@
     "resend": "^6.12.2"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "nodemon": "^3.1.4",
+    "puppeteer-core": "^24.43.0"
   }
 }
