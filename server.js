@@ -288,15 +288,23 @@ async function buscarParaClienteNuevo(phone, session, item) {
 
 // ─── Manejar selección de formato ────────────────────────────────────────────
 async function manejarFormato(phone, session, text) {
-  const num = parseInt(text);
   const formatos = session.data.formatosDisponibles;
+  const num = parseInt(text);
+  let formatoElegido = null;
 
-  if (isNaN(num) || num < 1 || num > formatos.length) {
-    await sendMessage(phone, `⚠️ Responde con un número entre 1 y ${formatos.length}.`);
-    return;
+  if (!isNaN(num) && num >= 1 && num <= formatos.length) {
+    formatoElegido = formatos[num - 1];
+  } else {
+    // Buscar coincidencia por texto (ej. "20 kg", "20kg", "20 kilos")
+    const textNorm = normalizar(text);
+    formatoElegido = formatos.find(f => normalizar(f).includes(textNorm) || textNorm.includes(normalizar(f)));
   }
 
-  const formatoElegido = formatos[num - 1];
+  if (!formatoElegido) {
+    const lista = formatos.map((f, i) => `*${i + 1}.* ${f}`).join("\n");
+    await sendMessage(phone, `⚠️ No reconocí ese formato. Elige con un número o escribe el formato exacto:\n\n${lista}`);
+    return;
+  }
   const opciones = session.data.opcionesEncontradas.filter(p => {
     const desc = normalizar(p.DesProd);
     return desc.includes(normalizar(formatoElegido));
