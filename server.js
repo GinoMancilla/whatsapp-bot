@@ -98,15 +98,26 @@ async function handleMessage(phone, text) {
       await sendMessage(phone,
         `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
         `Para cotizarte necesito algunos datos.\n\n` +
-        `📋 ¿Cuál es tu *RUT*?\n_Ejemplo: 12.345.678-9_`
+        `🏢 ¿Cuál es el *RUT de tu empresa*?\n_Ejemplo: 76.123.456-7_\n\n` +
+        `_Si no tienes RUT de empresa, escribe *no tengo*._`
       );
       session.step = STEPS.WAITING_RUT;
       break;
 
     case STEPS.WAITING_RUT: {
+      // Si el cliente no tiene RUT de empresa, pedir RUT personal
+      if (/^(no tengo|no|sin rut|personal|persona natural)$/i.test(normalizar(text))) {
+        session.data.esperandoRutPersonal = true;
+        await sendMessage(phone, `📋 ¿Cuál es tu *RUT personal*?\n_Ejemplo: 12.345.678-9_`);
+        break;
+      }
+
       const rutLimpio = text.replace(/[.\-\s]/g, "").toUpperCase();
       if (!validarRUT(text)) {
-        await sendMessage(phone, `⚠️ RUT inválido. Ingrésalo nuevamente.\n_Ejemplo: 12.345.678-9_`);
+        const hint = session.data.esperandoRutPersonal
+          ? `⚠️ RUT inválido. Ingrésalo nuevamente.\n_Ejemplo: 12.345.678-9_`
+          : `⚠️ RUT inválido. Ingrésalo nuevamente, o escribe *no tengo* si no tienes RUT de empresa.`;
+        await sendMessage(phone, hint);
         break;
       }
       session.data.rut      = text.toUpperCase();
