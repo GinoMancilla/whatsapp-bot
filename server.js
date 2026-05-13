@@ -300,13 +300,14 @@ async function buscarParaClienteNuevo(phone, session, item) {
 // ─── Manejar selección de formato ────────────────────────────────────────────
 async function manejarFormato(phone, session, text) {
   const formatos = session.data.formatosDisponibles;
+  const soloNumero = /^\s*\d+\s*$/.test(text);
   const num = parseInt(text);
   let formatoElegido = null;
 
-  if (!isNaN(num) && num >= 1 && num <= formatos.length) {
+  if (soloNumero && num >= 1 && num <= formatos.length) {
     formatoElegido = formatos[num - 1];
   } else {
-    // Buscar coincidencia por texto (ej. "20 kg", "20kg", "20 kilos")
+    // Buscar coincidencia por texto (ej. "20 kg", "20kg", "5 lt")
     const textNorm = normalizar(text);
     formatoElegido = formatos.find(f => normalizar(f).includes(textNorm) || textNorm.includes(normalizar(f)));
   }
