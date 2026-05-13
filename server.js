@@ -38,13 +38,29 @@ function normalizar(str) {
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
-// Palabras de envase que no deben usarse como keyword de producto
+// Palabras de envase/cantidad que no deben usarse como keyword de producto
 const STOP_WORDS_ENVASE = new Set([
   "bidon", "bidones", "bolsa", "bolsas", "saco", "sacos",
   "caja", "cajas", "frasco", "frascos", "tarro", "tarros",
   "balde", "baldes", "tambor", "tambores", "galon", "galones",
-  "envase", "envases", "botella", "botellas", "de",
+  "envase", "envases", "botella", "botellas", "de", "del",
+  "un", "una", "uno", "unos", "unas", "talla",
 ]);
+
+// Convierte "talla m/l/s/xl" → notación catálogo "t/m"/"t/l"/etc.
+function normalizarTalla(nombre) {
+  const m = normalizar(nombre).match(/\btalla\s+(xs|xch|xxl|xxg|xl|xg|ch|chico|mediano?|med|grande?|s|m|l|g)\b/);
+  if (!m) return null;
+  const map = {
+    xs:'t/xs', xch:'t/xs',
+    s:'t/s', ch:'t/s', chico:'t/s',
+    m:'t/m', mediano:'t/m', med:'t/m',
+    l:'t/l', g:'t/l', grande:'t/l',
+    xl:'t/xl', xg:'t/xl',
+    xxl:'t/xxl', xxg:'t/xxl',
+  };
+  return map[m[1]] || null;
+}
 
 // ─── Abreviar proveedor ───────────────────────────────────────────────────────
 function abreviarProveedor(proveedor) {
@@ -280,7 +296,15 @@ async function buscarParaClienteNuevo(phone, session, item) {
     .filter(w => w.length > 2 && !STOP_WORDS_ENVASE.has(w));
 
   // Buscar en todo el catálogo
-  const encontrados = buscarEnCatalogo(session.data.rows, keywords);
+  const todoEncontrado = buscarEnCatalogo(session.data.rows, keywords);
+
+  // Si el cliente especificó talla, filtrar por ella
+  const talla = normalizarTalla(item.nombre);
+  const encontrados = talla
+    ? (todoEncontrado.filter(p => normalizar(p.DesProd).includes(talla)).length > 0
+        ? todoEncontrado.filter(p => normalizar(p.DesProd).includes(talla))
+        : todoEncontrado) // fallback si la talla no existe en catálogo
+    : todoEncontrado;
 
   if (encontrados.length === 0) {
     session.data.productosNoEncontrados.push(item.nombre);
@@ -691,6 +715,8 @@ function parsearProductos(texto) {
   partes.forEach(parte => {
     parte = parte.trim();
     if (parte.length < 2) return;
+    // Limpiar prefijos de cantidad+envase: "una caja de X" → "X", "un bidón de X" → "X"
+    parte = parte.replace(/^(un[ao]?s?|dos|tres|cuatro|cinco)\s+(caja|bidon|bidones|bolsa|saco|frasco|tarro|balde|tambor|galon|envase|botella|paquete|sobre)s?\s+(de\s+)?/i, '').trim();
     const matchFinal  = parte.match(/^(.+?)\s+(\d+)\s*(paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?)?$/i);
     const matchInicio = parte.match(/^(\d+)\s*(paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?)?\s+(.+)$/i);
     if (matchFinal) {
