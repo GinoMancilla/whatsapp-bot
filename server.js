@@ -241,9 +241,10 @@ async function procesarProductos(phone, session) {
 
   session.data.rows            = rows;
   session.data.itemsPendientes = parsearProductos(session.data.textoProductos);
-  session.data.productosConfirmados = [];
-  session.data.productosBajoMargen  = [];
-  session.data.productosNoEncontrados = [];
+  // No resetear: el cliente puede agregar productos en múltiples rondas
+  if (!session.data.productosConfirmados)   session.data.productosConfirmados   = [];
+  if (!session.data.productosBajoMargen)    session.data.productosBajoMargen    = [];
+  if (!session.data.productosNoEncontrados) session.data.productosNoEncontrados = [];
 
   await procesarSiguienteProducto(phone, session);
 }
