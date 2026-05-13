@@ -124,21 +124,38 @@ async function handleMessage(phone, text) {
       session.data.rutLimpio = rutLimpio;
       session.data.rutSinDV  = rutLimpio.slice(0, -1);
       session.step = STEPS.WAITING_RAZON;
-      await sendMessage(phone, `✅ RUT registrado.\n\n🏢 ¿Cuál es la *Razón Social* de tu empresa?`);
+      if (session.data.esperandoRutPersonal) {
+        await sendMessage(phone, `✅ RUT registrado.\n\n👤 ¿Cuál es tu *nombre completo*?`);
+      } else {
+        await sendMessage(phone, `✅ RUT registrado.\n\n🏢 ¿Cuál es la *Razón Social* de tu empresa?`);
+      }
       break;
     }
 
-    case STEPS.WAITING_RAZON:
-      if (text.length < 3) { await sendMessage(phone, `⚠️ Ingresa la razón social completa.`); break; }
+    case STEPS.WAITING_RAZON: {
+      // Si escribe "no tengo" cuando se le pide razón social/nombre, volver a preguntar
+      if (/^(no tengo|no|sin empresa|sin nombre|nada)$/i.test(normalizar(text))) {
+        const pregunta = session.data.esperandoRutPersonal
+          ? `⚠️ Necesito tu nombre completo para la cotización.\n¿Cuál es tu *nombre*?`
+          : `⚠️ Necesito la razón social para la cotización.\n¿Cuál es el nombre de tu empresa?`;
+        await sendMessage(phone, pregunta);
+        break;
+      }
+      if (text.length < 3) {
+        await sendMessage(phone, `⚠️ Ingresa el nombre completo.`);
+        break;
+      }
       session.data.razonSocial = text;
       session.step = STEPS.WAITING_PRODUTOS;
+      const confirmLabel = session.data.esperandoRutPersonal ? `✅ Nombre registrado.` : `✅ Empresa registrada.`;
       await sendMessage(phone,
-        `✅ Empresa registrada.\n\n` +
+        `${confirmLabel}\n\n` +
         `📦 ¿Qué productos necesitas cotizar?\n\n` +
         `_Indica productos con cantidades:_\n` +
         `_"lavaloza 10 unidades, toalla 2 paquetes"_`
       );
       break;
+    }
 
     case STEPS.WAITING_PRODUTOS:
       if (text.length < 3) { await sendMessage(phone, `⚠️ Describe los productos que necesitas.`); break; }
@@ -407,11 +424,12 @@ async function manejarEleccionOpcion(phone, session, text) {
 
   session.data.itemsPendientes.shift();
 
-  // Si el cliente no especificó cantidad, pedirla ahora
-  if (!item.cantidadEspecificada) {
+  // Si el cliente no especificó cantidad y sí confirmó productos, pedirla ahora
+  const productosAgregados = session.data.productosConfirmados.length - cantidadAntes;
+  if (!item.cantidadEspecificada && productosAgregados > 0) {
     session.step = STEPS.WAITING_CANTIDAD;
-    session.data.cantidadPendienteCount = session.data.productosConfirmados.length - cantidadAntes;
-    const plural = session.data.cantidadPendienteCount > 1 ? "cada presentación" : "este producto";
+    session.data.cantidadPendienteCount = productosAgregados;
+    const plural = productosAgregados > 1 ? "cada presentación" : "este producto";
     await sendMessage(phone, `📦 ¿Cuántas unidades necesitas de ${plural}?`);
     return;
   }
