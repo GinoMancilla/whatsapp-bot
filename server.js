@@ -3,6 +3,7 @@ const express = require("express");
 const axios = require("axios");
 const { Resend } = require("resend");
 const { parse } = require("csv-parse/sync");
+const Anthropic = require("@anthropic-ai/sdk");
 
 const app = express();
 app.use(express.json());
@@ -43,6 +44,48 @@ function stemES(word) {
   if (word.length > 4 && word.endsWith("es")) return word.slice(0, -2);
   if (word.length > 3 && word.endsWith("s"))  return word.slice(0, -1);
   return word;
+}
+
+// ─── Detección de consultas y respuesta conversacional (Claude) ──────────────
+function esUnaConsulta(text) {
+  if (text.includes("?")) return true;
+  return /^(cuantas?|cuantos?|como|que|donde|cual|tienen|hay|venden|viene|incluyen?|trae[n]?|mandan|traen|cuesta[n]?|precio|disponible|se vende|entregan|despachan|incluye)/i
+    .test(normalizar(text));
+}
+
+async function responderConsulta(phone, session, pregunta) {
+  if (!process.env.ANTHROPIC_API_KEY) return false;
+  try {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    // Contexto resumido de la sesión actual
+    const confirmados = (session.data.productosConfirmados || [])
+      .map(p => p.seleccionado?.DesProd).filter(Boolean).join(", ");
+    const buscando = session.data.itemActual?.nombre || "";
+    const contextLine = [
+      confirmados && `Productos ya cotizados: ${confirmados}`,
+      buscando    && `Producto en búsqueda actual: ${buscando}`,
+    ].filter(Boolean).join(". ");
+
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 250,
+      system:
+        `Eres el asistente de ventas de CINTEC, empresa chilena de productos de limpieza, higiene y desinfección industrial. ` +
+        `Responde de forma breve y directa (máx 2-3 oraciones, en español). ` +
+        `Si no tienes la información exacta, sugiere contactar a un ejecutivo de ventas. ` +
+        `No inventes precios ni disponibilidad. ` +
+        (contextLine ? `Contexto de la cotización en curso: ${contextLine}.` : ""),
+      messages: [{ role: "user", content: pregunta }],
+    });
+
+    const reply = response.content[0]?.text || "";
+    await sendMessage(phone, `${reply}\n\n_Continuemos con tu cotización..._`);
+    return true;
+  } catch (err) {
+    console.error("Error Claude:", err.message);
+    return false;
+  }
 }
 
 // Palabras de envase/cantidad que no deben usarse como keyword de producto
@@ -113,6 +156,16 @@ async function handleMessage(phone, text) {
     delete sessions[phone];
     sessions[phone] = { step: STEPS.START, data: {} };
     session.step = STEPS.START;
+  }
+
+  // Interceptar consultas/preguntas libres durante el flujo de cotización
+  const stepsConversacionales = new Set([
+    STEPS.WAITING_PRODUTOS, STEPS.CONFIRMANDO, STEPS.WAITING_FORMATO,
+    STEPS.ELIGIENDO_OPCION, STEPS.WAITING_MAS, STEPS.WAITING_CANTIDAD,
+  ]);
+  if (stepsConversacionales.has(session.step) && esUnaConsulta(text)) {
+    const atendido = await responderConsulta(phone, session, text);
+    if (atendido) return;
   }
 
   switch (session.step) {
@@ -461,8 +514,13 @@ async function manejarEleccionOpcion(phone, session, text) {
   if (!item.cantidadEspecificada && productosAgregados > 0) {
     session.step = STEPS.WAITING_CANTIDAD;
     session.data.cantidadPendienteCount = productosAgregados;
-    const plural = productosAgregados > 1 ? "cada presentación" : "este producto";
-    await sendMessage(phone, `📦 ¿Cuántas unidades necesitas de ${plural}?`);
+    if (productosAgregados > 1) {
+      await sendMessage(phone, `📦 ¿Cuántas unidades necesitas de cada presentación?`);
+    } else {
+      const prod = session.data.productosConfirmados[session.data.productosConfirmados.length - 1];
+      const desc = prod?.seleccionado?.DesProd || "este producto";
+      await sendMessage(phone, `📦 ¿Cuántas unidades necesitas?\n_${desc}_`);
+    }
     return;
   }
 
@@ -480,7 +538,8 @@ async function continuarTrasEleccion(phone, session) {
 
 // ─── Manejar cantidad cuando no fue especificada ──────────────────────────────
 async function manejarCantidad(phone, session, text) {
-  const num = parseInt(text);
+  const match = text.match(/\d+/);
+  const num = match ? parseInt(match[0]) : NaN;
   if (isNaN(num) || num < 1) {
     await sendMessage(phone, `⚠️ Ingresa una cantidad válida (número mayor a 0).`);
     return;
