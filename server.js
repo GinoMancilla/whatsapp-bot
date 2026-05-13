@@ -38,6 +38,13 @@ function normalizar(str) {
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
+// Reduce plural español a raíz: "guantes"→"guante", "bidones"→"bidon"
+function stemES(word) {
+  if (word.length > 4 && word.endsWith("es")) return word.slice(0, -2);
+  if (word.length > 3 && word.endsWith("s"))  return word.slice(0, -1);
+  return word;
+}
+
 // Palabras de envase/cantidad que no deben usarse como keyword de producto
 const STOP_WORDS_ENVASE = new Set([
   "bidon", "bidones", "bolsa", "bolsas", "saco", "sacos",
@@ -643,7 +650,10 @@ function buscarProductoHistorial(rows, rutSinDV, nombreBuscado) {
   const filasProducto = filasCliente.filter(row => {
     const desc = normalizar(row["DesProd"] || "");
     const cod  = (row["CodProd"] || "").toLowerCase();
-    return keywords.some(k => desc.includes(k) || cod.includes(k));
+    return keywords.some(k => {
+      const stem = stemES(k);
+      return desc.includes(k) || desc.includes(stem) || cod.includes(k) || cod.includes(stem);
+    });
   });
 
   if (filasProducto.length === 0) return { principal: null, alternativas: [], bajoMargen: false };
@@ -690,7 +700,10 @@ function buscarEnCatalogo(rows, keywords) {
     const cod  = (row["CodProd"] || "").toLowerCase();
     const precio = parseFloat((row["Precio Lista"] || "0").replace(/[$.\s]/g,"").replace(",","."));
     if (precio <= 0) return false;
-    const match = keywords.some(k => desc.includes(k) || cod.includes(k));
+    const match = keywords.some(k => {
+      const stem = stemES(k);
+      return desc.includes(k) || desc.includes(stem) || cod.includes(k) || cod.includes(stem);
+    });
     if (match) console.log(`Encontrado: ${row["DesProd"]} | PrecioLista: ${row["Precio Lista"]}`);
     return match;
   });
