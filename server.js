@@ -800,16 +800,17 @@ function parsearProductos(texto) {
     // Limpiar prefijos de cantidad+envase: "una caja de X" → "X", "un bidón de X" → "X"
     parte = parte.replace(/^(un[ao]?s?|dos|tres|cuatro|cinco)\s+(caja|bidon|bidones|bolsa|saco|frasco|tarro|balde|tambor|galon|envase|botella|paquete|sobre)s?\s+(de\s+)?/i, '').trim();
 
-    // Extraer formato inline "x 5lt", "x 5 lt", "x 10kg" del nombre
+    // Extraer formato inline "x 5lt", "formato 5 lt", "x 10kg", etc.
     let formatoEspecificado = null;
-    const fmtMatch = parte.match(/\s+x\s*(\d+(?:[.,]\d+)?\s*(?:lt|litros?|kg|kilos?|gr|gramos?|ml|cc|l\b))\b/i);
+    const fmtMatch = parte.match(/\s+(?:x|formato)\s+(\d+(?:[.,]\d+)?\s*(?:lt|litros?|kg|kilos?|gr|gramos?|ml|cc|l\b))\b/i);
     if (fmtMatch) {
       formatoEspecificado = normalizarFormatoStr(fmtMatch[1]);
       parte = parte.replace(fmtMatch[0], '').trim();
     }
 
-    const matchFinal  = parte.match(/^(.+?)\s+(\d+)\s*(paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?)?$/i);
-    const matchInicio = parte.match(/^(\d+)\s*(paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?)?\s+(.+)$/i);
+    const UNIDADES = `paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?|bidones?|tambores?|baldes?|galones?|frascos?|tarros?|sachet|sobres?`;
+    const matchFinal  = parte.match(new RegExp(`^(.+?)\\s+(\\d+)\\s*(${UNIDADES})?$`, 'i'));
+    const matchInicio = parte.match(new RegExp(`^(\\d+)\\s*(${UNIDADES})?\\s+(.+)$`, 'i'));
     if (matchFinal) {
       const nombre = normalizar(matchFinal[1]);
       if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchFinal[2]), unidad: matchFinal[3] || "unidades", cantidadEspecificada: true, formatoEspecificado });
