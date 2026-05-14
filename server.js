@@ -174,31 +174,28 @@ async function handleMessage(phone, text) {
       await sendMessage(phone,
         `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
         `Para cotizarte necesito algunos datos.\n\n` +
-        `🏢 ¿Cuál es el *RUT de tu empresa*?\n_Ejemplo: 76.123.456-7_\n\n` +
-        `_Si no tienes RUT de empresa, escribe *no tengo*._`
+        `📋 Si tienes *RUT de empresa*, ingrésalo ahora.\n` +
+        `Si no, ingresa tu *RUT personal*.\n\n` +
+        `_Ej empresa: 76.123.456-7 · Ej personal: 12.345.678-9_`
       );
       session.step = STEPS.WAITING_RUT;
       break;
 
     case STEPS.WAITING_RUT: {
-      // Si el cliente no tiene RUT de empresa, pedir RUT personal
-      if (/^(no tengo|no|sin rut|personal|persona natural)$/i.test(normalizar(text))) {
-        session.data.esperandoRutPersonal = true;
-        await sendMessage(phone, `📋 ¿Cuál es tu *RUT personal*?\n_Ejemplo: 12.345.678-9_`);
-        break;
-      }
-
       const rutLimpio = text.replace(/[.\-\s]/g, "").toUpperCase();
       if (!validarRUT(text)) {
-        const hint = session.data.esperandoRutPersonal
-          ? `⚠️ RUT inválido. Ingrésalo nuevamente.\n_Ejemplo: 12.345.678-9_`
-          : `⚠️ RUT inválido. Ingrésalo nuevamente, o escribe *no tengo* si no tienes RUT de empresa.`;
-        await sendMessage(phone, hint);
+        await sendMessage(phone,
+          `⚠️ RUT inválido. Ingrésalo nuevamente.\n` +
+          `_Ej empresa: 76.123.456-7 · Ej personal: 12.345.678-9_`
+        );
         break;
       }
-      session.data.rut      = text.toUpperCase();
-      session.data.rutLimpio = rutLimpio;
-      session.data.rutSinDV  = rutLimpio.slice(0, -1);
+      // Detectar si es RUT de empresa (parte numérica >= 8 dígitos → persona jurídica)
+      const soloDigitos = rutLimpio.slice(0, -1);
+      session.data.rut            = text.toUpperCase();
+      session.data.rutLimpio      = rutLimpio;
+      session.data.rutSinDV       = soloDigitos;
+      session.data.esperandoRutPersonal = soloDigitos.length < 8;
       session.step = STEPS.WAITING_RAZON;
       if (session.data.esperandoRutPersonal) {
         await sendMessage(phone, `✅ RUT registrado.\n\n👤 ¿Cuál es tu *nombre completo*?`);
