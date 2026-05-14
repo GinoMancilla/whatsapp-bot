@@ -378,12 +378,20 @@ async function buscarParaClienteNuevo(phone, session, item) {
     return;
   }
 
+  // Si el cliente especificó formato inline ("x 5lt"), filtrar directo
+  let resultado = encontrados;
+  if (item.formatoEspecificado) {
+    const fmt = normalizarFormatoStr(item.formatoEspecificado);
+    const filtradosFmt = encontrados.filter(p => normalizar(p.DesProd).includes(fmt));
+    resultado = filtradosFmt.length > 0 ? filtradosFmt : encontrados;
+  }
+
   // Extraer formatos únicos (litros, kg, ml, etc.)
-  const formatos = extraerFormatos(encontrados);
+  const formatos = extraerFormatos(resultado);
 
   if (formatos.length > 1 && !item.formatoEspecificado) {
     // Preguntar formato
-    session.data.opcionesEncontradas = encontrados;
+    session.data.opcionesEncontradas = resultado;
     session.data.formatosDisponibles  = formatos;
     session.step = STEPS.WAITING_FORMATO;
 
@@ -393,9 +401,7 @@ async function buscarParaClienteNuevo(phone, session, item) {
     msg += `\nResponde con el *número* del formato que necesitas.`;
     await sendMessage(phone, msg);
   } else {
-    // Mostrar opciones directamente
-    const filtradas = formatos.length > 0 ? encontrados : encontrados;
-    await mostrarOpcionesProducto(phone, session, filtradas, item);
+    await mostrarOpcionesProducto(phone, session, resultado, item);
   }
 }
 
@@ -780,6 +786,12 @@ function extraerFormatos(productos) {
   return [...formatos].slice(0, 5);
 }
 
+// Normaliza un string de formato: "5lt"→"5 lt", "10kg"→"10 kg"
+function normalizarFormatoStr(fmt) {
+  return (fmt || "").toLowerCase().trim()
+    .replace(/(\d)\s*(lt|litros?|kg|kilos?|gr|gramos?|ml|cc|un\b)/gi, '$1 $2').trim();
+}
+
 // ─── Parsear texto de productos ───────────────────────────────────────────────
 function parsearProductos(texto) {
   const items  = [];
@@ -790,17 +802,26 @@ function parsearProductos(texto) {
     if (parte.length < 2) return;
     // Limpiar prefijos de cantidad+envase: "una caja de X" → "X", "un bidón de X" → "X"
     parte = parte.replace(/^(un[ao]?s?|dos|tres|cuatro|cinco)\s+(caja|bidon|bidones|bolsa|saco|frasco|tarro|balde|tambor|galon|envase|botella|paquete|sobre)s?\s+(de\s+)?/i, '').trim();
+
+    // Extraer formato inline "x 5lt", "x 5 lt", "x 10kg" del nombre
+    let formatoEspecificado = null;
+    const fmtMatch = parte.match(/\s+x\s*(\d+(?:[.,]\d+)?\s*(?:lt|litros?|kg|kilos?|gr|gramos?|ml|cc|l\b))\b/i);
+    if (fmtMatch) {
+      formatoEspecificado = normalizarFormatoStr(fmtMatch[1]);
+      parte = parte.replace(fmtMatch[0], '').trim();
+    }
+
     const matchFinal  = parte.match(/^(.+?)\s+(\d+)\s*(paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?)?$/i);
     const matchInicio = parte.match(/^(\d+)\s*(paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?)?\s+(.+)$/i);
     if (matchFinal) {
       const nombre = normalizar(matchFinal[1]);
-      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchFinal[2]), unidad: matchFinal[3] || "unidades", cantidadEspecificada: true });
+      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchFinal[2]), unidad: matchFinal[3] || "unidades", cantidadEspecificada: true, formatoEspecificado });
     } else if (matchInicio) {
       const nombre = normalizar(matchInicio[3]);
-      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchInicio[1]), unidad: matchInicio[2] || "unidades", cantidadEspecificada: true });
+      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchInicio[1]), unidad: matchInicio[2] || "unidades", cantidadEspecificada: true, formatoEspecificado });
     } else {
       const nombre = normalizar(parte);
-      if (nombre.length > 2) items.push({ nombre, cantidad: 1, unidad: "unidades", cantidadEspecificada: false });
+      if (nombre.length > 2) items.push({ nombre, cantidad: 1, unidad: "unidades", cantidadEspecificada: false, formatoEspecificado });
     }
   });
 
