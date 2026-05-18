@@ -333,17 +333,11 @@ async function buscarParaClienteExistente(phone, session, item) {
     session.step = STEPS.CONFIRMANDO;
     await sendMessage(phone, msg);
   } else if (resultado.bajoMargen) {
-    session.data.productosBajoMargen.push({ ...item, producto: resultado.bajoMargenProducto });
-    await notificarBajoMargen(phone, session.data, [{ ...item, producto: resultado.bajoMargenProducto }]);
-    await sendMessage(phone,
-      `⚠️ El producto _"${item.nombre}"_ requiere actualización de precios.\n` +
-      `Un representante te contactará a la brevedad.\n\nContinuemos con el siguiente producto.`
-    );
-    session.data.itemsPendientes.shift();
-    await procesarSiguienteProducto(phone, session);
+    // Precio desactualizado en historial → avisar al equipo y buscar en catálogo
+    notificarBajoMargen(phone, session.data, [{ ...item, producto: resultado.bajoMargenProducto }]);
+    await buscarParaClienteNuevo(phone, session, item);
   } else {
-    // No encontrado en historial → buscar en catálogo general como cliente nuevo
-    await sendMessage(phone, `ℹ️ No encontré _"${item.nombre}"_ en tu historial. Buscando en catálogo general...`);
+    // No encontrado en historial → buscar en catálogo general
     await buscarParaClienteNuevo(phone, session, item);
   }
 }
@@ -786,7 +780,7 @@ function extraerFormatos(productos) {
 // Normaliza un string de formato: "5lt"→"5 lt", "10kg"→"10 kg"
 function normalizarFormatoStr(fmt) {
   return (fmt || "").toLowerCase().trim()
-    .replace(/(\d)\s*(lt|litros?|kg|kilos?|gr|gramos?|ml|cc|un\b)/gi, '$1 $2').trim();
+    .replace(/(\d)\s*(lt|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|metros?|un\b)/gi, '$1 $2').trim();
 }
 
 // ─── Parsear texto de productos ───────────────────────────────────────────────
@@ -802,13 +796,13 @@ function parsearProductos(texto) {
 
     // Extraer formato inline "x 5lt", "formato 5 lt", "x 10kg", etc.
     let formatoEspecificado = null;
-    const fmtMatch = parte.match(/\s+(?:x|formato)\s+(\d+(?:[.,]\d+)?\s*(?:lt|litros?|kg|kilos?|gr|gramos?|ml|cc|l\b))\b/i);
+    const fmtMatch = parte.match(/\s+(?:x|formato)\s+(\d+(?:[.,]\d+)?\s*(?:lt|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|metros?|l\b))\b/i);
     if (fmtMatch) {
       formatoEspecificado = normalizarFormatoStr(fmtMatch[1]);
       parte = parte.replace(fmtMatch[0], '').trim();
     }
 
-    const UNIDADES = `paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?|bidones?|tambores?|baldes?|galones?|frascos?|tarros?|sachet|sobres?`;
+    const UNIDADES = `paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?|bidones?|tambores?|baldes?|galones?|frascos?|tarros?|sachet|sobres?|mt|metros?`;
     const matchFinal  = parte.match(new RegExp(`^(.+?)\\s+(\\d+)\\s*(${UNIDADES})?$`, 'i'));
     const matchInicio = parte.match(new RegExp(`^(\\d+)\\s*(${UNIDADES})?\\s+(.+)$`, 'i'));
     if (matchFinal) {
