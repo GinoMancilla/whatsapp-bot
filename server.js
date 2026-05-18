@@ -191,17 +191,18 @@ async function handleMessage(phone, text) {
         );
         break;
       }
-      // Detectar si es RUT de empresa (parte numérica >= 8 dígitos → persona jurídica)
+      // En Chile, RUTs de empresa son >= 50.000.000 (comienzan con 5, 6, 7, 8 o 9)
       const soloDigitos = rutLimpio.slice(0, -1);
-      session.data.rut            = text.toUpperCase();
-      session.data.rutLimpio      = rutLimpio;
-      session.data.rutSinDV       = soloDigitos;
-      session.data.esperandoRutPersonal = soloDigitos.length < 8;
+      const esEmpresa   = parseInt(soloDigitos, 10) >= 50000000;
+      session.data.rut              = text.toUpperCase();
+      session.data.rutLimpio        = rutLimpio;
+      session.data.rutSinDV         = soloDigitos;
+      session.data.esperandoRutPersonal = !esEmpresa;
       session.step = STEPS.WAITING_RAZON;
-      if (session.data.esperandoRutPersonal) {
-        await sendMessage(phone, `✅ RUT registrado.\n\n👤 ¿Cuál es tu *nombre completo*?`);
+      if (esEmpresa) {
+        await sendMessage(phone, `✅ RUT registrado.\n\n🏢 ¿Cuál es la *razón social* de tu empresa?`);
       } else {
-        await sendMessage(phone, `✅ RUT registrado.\n\n🏢 ¿Cuál es la *Razón Social* de tu empresa?`);
+        await sendMessage(phone, `✅ RUT registrado.\n\n👤 ¿Cuál es tu *nombre*?`);
       }
       break;
     }
