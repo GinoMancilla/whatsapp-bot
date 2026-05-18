@@ -345,7 +345,7 @@ async function buscarParaClienteExistente(phone, session, item) {
 // ─── Buscar para cliente nuevo (catálogo completo, Precio Lista) ──────────────
 async function buscarParaClienteNuevo(phone, session, item) {
   const keywords = normalizar(item.nombre).split(" ")
-    .filter(w => w.length > 2 && !STOP_WORDS_ENVASE.has(w));
+    .filter(w => w.length > 2 && !STOP_WORDS_ENVASE.has(w) && !/^\d+$/.test(w));
 
   // Buscar en todo el catálogo
   const todoEncontrado = buscarEnCatalogo(session.data.rows, keywords);
@@ -699,7 +699,7 @@ async function mostrarResumenFinal(phone, session) {
 function buscarProductoHistorial(rows, rutSinDV, nombreBuscado) {
   const haceSeismeses = new Date();
   haceSeismeses.setMonth(haceSeismeses.getMonth() - 6);
-  const keywords = normalizar(nombreBuscado).split(" ").filter(w => w.length > 2);
+  const keywords = normalizar(nombreBuscado).split(" ").filter(w => w.length > 2 && !/^\d+$/.test(w));
 
   const filasCliente = rows.filter(row =>
     (row["CodAuxGSaen"] || "").replace(/[.\-\s]/g, "") === rutSinDV
