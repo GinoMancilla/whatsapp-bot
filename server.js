@@ -199,32 +199,23 @@ async function handleMessage(phone, text) {
       session.data.rutSinDV         = soloDigitos;
       session.data.esperandoRutPersonal = !esEmpresa;
       session.step = STEPS.WAITING_RAZON;
-      if (esEmpresa) {
-        await sendMessage(phone, `✅ RUT registrado.\n\n🏢 ¿Cuál es la *razón social* de tu empresa?`);
-      } else {
-        await sendMessage(phone, `✅ RUT registrado.\n\n👤 ¿Cuál es tu *nombre*?`);
-      }
+      await sendMessage(phone, `✅ RUT registrado.\n\n¿Cuál es tu *nombre o razón social*?`);
       break;
     }
 
     case STEPS.WAITING_RAZON: {
-      // Si escribe "no tengo" cuando se le pide razón social/nombre, volver a preguntar
       if (/^(no tengo|no|sin empresa|sin nombre|nada)$/i.test(normalizar(text))) {
-        const pregunta = session.data.esperandoRutPersonal
-          ? `⚠️ Necesito tu nombre completo para la cotización.\n¿Cuál es tu *nombre*?`
-          : `⚠️ Necesito la razón social para la cotización.\n¿Cuál es el nombre de tu empresa?`;
-        await sendMessage(phone, pregunta);
+        await sendMessage(phone, `⚠️ Necesito tu nombre o razón social para la cotización.\n¿Cuál es tu *nombre o razón social*?`);
         break;
       }
       if (text.length < 3) {
-        await sendMessage(phone, `⚠️ Ingresa el nombre completo.`);
+        await sendMessage(phone, `⚠️ Ingresa tu nombre o razón social.`);
         break;
       }
       session.data.razonSocial = text;
       session.step = STEPS.WAITING_PRODUTOS;
-      const confirmLabel = session.data.esperandoRutPersonal ? `✅ Nombre registrado.` : `✅ Empresa registrada.`;
       await sendMessage(phone,
-        `${confirmLabel}\n\n` +
+        `✅ Registrado.\n\n` +
         `📦 ¿Qué productos necesitas cotizar?\n\n` +
         `_Indica productos con cantidades:_\n` +
         `_"lavaloza 10 unidades, toalla 2 paquetes"_`
