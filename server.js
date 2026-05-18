@@ -18,6 +18,7 @@ const {
 } = process.env;
 
 const sessions = {};
+const hidroPendientes = new Map(); // phone → respuesta del especialista (fallback si sesión expiró)
 
 const STEPS = {
   START:              "start",
@@ -30,6 +31,9 @@ const STEPS = {
   WAITING_CANTIDAD:   "waiting_cantidad",
   WAITING_MAS:        "waiting_mas",
   WAITING_EMAIL:      "waiting_email",
+  HIDRO_SPECS:        "hidro_specs",
+  HIDRO_ESPERANDO:    "hidro_esperando",
+  HIDRO_EMAIL:        "hidro_email",
   DONE:               "done",
 };
 
@@ -261,6 +265,18 @@ async function handleMessage(phone, text) {
       setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
       break;
 
+    case STEPS.HIDRO_SPECS:
+      await manejarHidroSpecs(phone, session, text);
+      break;
+
+    case STEPS.HIDRO_ESPERANDO:
+      await sendMessage(phone, `⏳ Tu cotización está siendo preparada por un especialista. Te avisaremos cuando esté lista.`);
+      break;
+
+    case STEPS.HIDRO_EMAIL:
+      await manejarHidroEmail(phone, session, text);
+      break;
+
     case STEPS.DONE:
       await sendMessage(phone, `Tu solicitud fue procesada. Escribe *hola* para una nueva cotización.`);
       break;
@@ -302,7 +318,9 @@ async function procesarSiguienteProducto(phone, session) {
   const item = session.data.itemsPendientes[0];
   session.data.itemActual = item;
 
-  if (session.data.esClienteNuevo) {
+  if (esHidrolavadora(item.nombre)) {
+    await iniciarFlujoHidro(phone, session);
+  } else if (session.data.esClienteNuevo) {
     await buscarParaClienteNuevo(phone, session, item);
   } else {
     await buscarParaClienteExistente(phone, session, item);
@@ -1015,6 +1033,135 @@ async function notificarBajoMargen(phone, data, productosBajoMargen) {
   }
 }
 
+// ─── Flujo Hidrolavadora ──────────────────────────────────────────────────────
+const HIDRO_KEYWORDS = /hidro\s?lavadora|hidrolavadora|pressure\s?washer|lavadora\s?a\s?presion/i;
+
+function esHidrolavadora(nombre) {
+  return HIDRO_KEYWORDS.test(nombre);
+}
+
+const HIDRO_PREGUNTAS = [
+  { key: "agua",      msg: "💧 ¿La hidrolavadora usará *agua fría* o *agua caliente*?" },
+  { key: "corriente", msg: "⚡ ¿Qué tipo de corriente eléctrica requiere?\n*1.* Monofásica (220V)\n*2.* Trifásica (380V)" },
+  { key: "bares",     msg: "🔧 ¿Qué presión necesita?\n_Indica en bares, ej: 100, 150, 200_" },
+  { key: "caudal",    msg: "🌊 ¿Qué caudal necesita?\n_Indica en litros/minuto, ej: 10, 15, 20_" },
+  { key: "modelo",    msg: "📋 ¿Tiene algún modelo de referencia?\n_Escribe marca y modelo, o *no* si no tiene_" },
+  { key: "horas",     msg: "⏱️ ¿Cuántas horas al día operará la hidrolavadora?" },
+  { key: "uso",       msg: "🏭 ¿Para qué uso la destinará?\n_Ej: lavado de vehículos, maquinaria industrial, pisos_" },
+];
+
+async function iniciarFlujoHidro(phone, session) {
+  session.data.hidroSpecs   = {};
+  session.data.hidroPaso    = 0;
+  session.step = STEPS.HIDRO_SPECS;
+  await sendMessage(phone,
+    `🔩 Para cotizar una *hidrolavadora* correctamente, necesito algunas especificaciones técnicas.\n\n` +
+    HIDRO_PREGUNTAS[0].msg
+  );
+}
+
+async function manejarHidroSpecs(phone, session, text) {
+  const paso = session.data.hidroPaso;
+  const { key } = HIDRO_PREGUNTAS[paso];
+
+  // Guardar respuesta actual
+  if (key === "corriente") {
+    session.data.hidroSpecs[key] = /^[12]$/.test(text.trim())
+      ? (text.trim() === "1" ? "Monofásica (220V)" : "Trifásica (380V)")
+      : text;
+  } else {
+    session.data.hidroSpecs[key] = text;
+  }
+
+  const siguientePaso = paso + 1;
+  if (siguientePaso < HIDRO_PREGUNTAS.length) {
+    session.data.hidroPaso = siguientePaso;
+    await sendMessage(phone, HIDRO_PREGUNTAS[siguientePaso].msg);
+  } else {
+    // Todas las specs recolectadas
+    session.data.itemsPendientes.shift();
+    session.step = STEPS.HIDRO_ESPERANDO;
+    await enviarSolicitudHidroEmail(phone, session.data);
+    await sendMessage(phone,
+      `✅ ¡Listo! Hemos registrado todas las especificaciones.\n\n` +
+      `Tu solicitud fue derivada a un *especialista* que buscará la mejor opción en calidad y precio.\n\n` +
+      `Te notificaremos por este medio cuando tengamos la cotización. ⏳`
+    );
+    // Continuar con otros productos pendientes si los hay
+    if (session.data.itemsPendientes.length > 0) {
+      await procesarSiguienteProducto(phone, session);
+    }
+  }
+}
+
+async function manejarHidroEmail(phone, session, text) {
+  if (!text.includes("@") || !text.includes(".")) {
+    await sendMessage(phone, `⚠️ Ingresa un correo electrónico válido.`);
+    return;
+  }
+  const emailCliente = text.toLowerCase();
+  const respuesta    = session.data.hidroRespuesta || "";
+  const resend       = new Resend(RESEND_API_KEY);
+  try {
+    await resend.emails.send({
+      from: "Bot CINTEC <onboarding@resend.dev>",
+      to:   emailCliente,
+      subject: "Cotización Hidrolavadora - CINTEC",
+      html: `<h2>Cotización Hidrolavadora</h2>
+        <p>Estimado/a <strong>${session.data.razonSocial}</strong>,</p>
+        <p>A continuación le presentamos la cotización preparada por nuestro especialista:</p>
+        <div style="background:#f5f5f5;padding:16px;border-radius:8px;white-space:pre-wrap;">${respuesta.replace(/\n/g,"<br>")}</div>
+        <p>Cualquier consulta, puede responder este correo o contactarnos por WhatsApp.</p>
+        <p><em>Equipo CINTEC</em></p>`,
+    });
+    await sendMessage(phone, `✅ La cotización fue enviada a *${emailCliente}*.\n\n¡Gracias por preferirnos! Escribe *hola* si necesitas algo más.`);
+  } catch (err) {
+    await sendMessage(phone, `⚠️ No pude enviar el correo. Intenta nuevamente.`);
+    console.error("Error enviando cotización hidro:", err.message);
+    return;
+  }
+  session.step = STEPS.DONE;
+  setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
+}
+
+async function enviarSolicitudHidroEmail(phone, data) {
+  try {
+    const resend  = new Resend(RESEND_API_KEY);
+    const fecha   = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+    const specs   = data.hidroSpecs || {};
+    const baseUrl = process.env.BASE_URL || "https://whatsapp-bot-production.up.railway.app";
+    const formUrl = `${baseUrl}/especialista/form?phone=${phone}&nombre=${encodeURIComponent(data.razonSocial)}&token=${VERIFY_TOKEN}`;
+
+    const filas = HIDRO_PREGUNTAS.map(p =>
+      `<tr><td style="padding:6px 12px;font-weight:bold">${p.key}</td><td style="padding:6px 12px">${specs[p.key] || "-"}</td></tr>`
+    ).join("");
+
+    await resend.emails.send({
+      from:    "Bot CINTEC <onboarding@resend.dev>",
+      to:      DESTINATION_EMAIL,
+      subject: `🔩 Solicitud Hidrolavadora — ${data.razonSocial}`,
+      html: `
+        <h2>🔩 Nueva solicitud de hidrolavadora</h2>
+        <p><strong>Fecha:</strong> ${fecha}</p>
+        <p><strong>Cliente:</strong> ${data.razonSocial} | RUT: ${data.rut} | WhatsApp: +${phone}</p>
+        <h3>Especificaciones técnicas</h3>
+        <table border="1" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+          <tr><th style="padding:6px 12px">Especificación</th><th style="padding:6px 12px">Respuesta</th></tr>
+          ${filas}
+        </table>
+        <br>
+        <p>
+          <a href="${formUrl}" style="background:#ed0914;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold">
+            📩 Responder cotización al cliente
+          </a>
+        </p>
+        <p style="color:#888;font-size:12px">O copia este enlace: ${formUrl}</p>`,
+    });
+  } catch (err) {
+    console.error("Error enviando solicitud hidro:", err.message);
+  }
+}
+
 // ─── Notificar interno ────────────────────────────────────────────────────────
 async function notificarInterno(phone, data) {
   try {
@@ -1062,6 +1209,73 @@ function validarRUT(rut) {
   const dvExp = exp === 11 ? "0" : exp === 10 ? "K" : String(exp);
   return dv === dvExp;
 }
+
+// ─── Especialista: formulario y recepción de cotización hidrolavadora ─────────
+app.get("/especialista/form", (req, res) => {
+  const { phone, nombre, token } = req.query;
+  if (!phone || !token) return res.status(400).send("Parámetros inválidos.");
+  res.send(`<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cotización Hidrolavadora — CINTEC</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+    h2   { color: #ed0914; }
+    textarea { width: 100%; height: 200px; padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; }
+    button { background: #ed0914; color: #fff; border: none; padding: 12px 28px; font-size: 16px; border-radius: 6px; cursor: pointer; margin-top: 12px; }
+    button:hover { background: #c00; }
+    .info { background: #f5f5f5; padding: 12px; border-radius: 6px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h2>🔩 Responder cotización hidrolavadora</h2>
+  <div class="info">
+    <strong>Cliente:</strong> ${nombre || "–"}<br>
+    <strong>WhatsApp:</strong> +${phone}
+  </div>
+  <p>Escribe la cotización del equipo recomendado (modelo, precio, características, condiciones):</p>
+  <form method="POST" action="/especialista/cotizacion">
+    <input type="hidden" name="phone" value="${phone}">
+    <input type="hidden" name="token" value="${token}">
+    <textarea name="respuesta" placeholder="Ej: Recomendamos KARCHER HD 7/18-4 Classic — Monofásica, 180 bar, 18 lt/min...&#10;Precio neto: $850.000&#10;Condiciones: ..." required></textarea>
+    <br>
+    <button type="submit">📩 Enviar cotización al cliente</button>
+  </form>
+</body>
+</html>`);
+});
+
+app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), async (req, res) => {
+  const { phone, token, respuesta } = req.body;
+  if (!phone || !respuesta) return res.status(400).send("Faltan campos.");
+  if (token !== VERIFY_TOKEN) return res.status(401).send("Token inválido.");
+
+  const session = sessions[phone];
+  if (session) {
+    session.data.hidroRespuesta = respuesta;
+    session.step = STEPS.HIDRO_EMAIL;
+    await sendMessage(phone,
+      `✅ ¡Tenemos la cotización de tu hidrolavadora!\n\n` +
+      `¿A qué *correo electrónico* te enviamos el detalle?`
+    );
+  } else {
+    // Sesión expiró — guardar en mapa y reiniciar sesión mínima
+    hidroPendientes.set(phone, respuesta);
+    sessions[phone] = { step: STEPS.HIDRO_EMAIL, data: { hidroRespuesta: respuesta, razonSocial: "Cliente" } };
+    await sendMessage(phone,
+      `✅ ¡Tenemos la cotización de tu hidrolavadora!\n\n` +
+      `¿A qué *correo electrónico* te enviamos el detalle?`
+    );
+  }
+
+  res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>OK</title></head>
+<body style="font-family:Arial;max-width:500px;margin:60px auto;text-align:center">
+  <h2 style="color:#27ae60">✅ Cotización enviada al cliente</h2>
+  <p>El cliente recibirá el mensaje por WhatsApp y podrá indicar su correo.</p>
+</body></html>`);
+});
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
