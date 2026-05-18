@@ -382,10 +382,15 @@ async function buscarParaClienteNuevo(phone, session, item) {
 
   // Si el cliente especificó formato inline ("x 5lt", "formato 5 lt"), filtrar directo
   let resultado = encontrados;
+  let formatoNoEncontrado = false;
   if (item.formatoEspecificado) {
     const fmt = normalizarFormatoStr(item.formatoEspecificado);
     const filtradosFmt = encontrados.filter(p => normalizar(p.DesProd).includes(fmt));
-    resultado = filtradosFmt.length > 0 ? filtradosFmt : encontrados;
+    if (filtradosFmt.length > 0) {
+      resultado = filtradosFmt;
+    } else {
+      formatoNoEncontrado = true; // el formato pedido no existe, mostramos lo disponible
+    }
   }
 
   // Extraer formatos únicos (litros, kg, ml, mt, etc.)
@@ -400,6 +405,17 @@ async function buscarParaClienteNuevo(phone, session, item) {
     msg += `¿Qué formato necesitas?\n\n`;
     formatos.forEach((f, i) => { msg += `*${i + 1}.* ${f}\n`; });
     msg += `\nResponde con el *número* del formato que necesitas.`;
+    await sendMessage(phone, msg);
+  } else if (formatoNoEncontrado && formatos.length > 1) {
+    // Formato pedido no existe → avisar y mostrar los disponibles
+    session.data.opcionesEncontradas = resultado;
+    session.data.formatosDisponibles  = formatos;
+    session.step = STEPS.WAITING_FORMATO;
+
+    let msg = `ℹ️ No tenemos _"${item.nombre}"_ en formato *${item.formatoEspecificado}*.\n\n`;
+    msg += `Los formatos disponibles son:\n\n`;
+    formatos.forEach((f, i) => { msg += `*${i + 1}.* ${f}\n`; });
+    msg += `\nResponde con el *número* del que necesitas.`;
     await sendMessage(phone, msg);
   } else {
     await mostrarOpcionesProducto(phone, session, resultado, item);
@@ -792,12 +808,21 @@ function buscarEnCatalogo(rows, keywords) {
 // ─── Extraer formatos del texto ───────────────────────────────────────────────
 function extraerFormatos(productos) {
   const formatoRegex = /(\d+(?:[.,]\d+)?\s*(?:lt|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|metros?|un|unidades?|l\b))/gi;
-  const formatos = new Set();
+  const medidas   = new Set(); // lt, kg, mt, ml, etc. — van primero
+  const conteos   = new Set(); // un, unidades — van después
+  const esMedida  = /^[\d.,]+\s*(lt|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|metros?)/i;
+
   productos.forEach(p => {
     const matches = (p.DesProd || "").match(formatoRegex);
-    if (matches) matches.forEach(m => formatos.add(m.trim().toLowerCase()));
+    if (matches) matches.forEach(m => {
+      const normalizado = normalizarFormatoStr(m.trim());
+      if (esMedida.test(normalizado)) medidas.add(normalizado);
+      else conteos.add(normalizado);
+    });
   });
-  return [...formatos].slice(0, 5);
+
+  // Medidas reales primero, luego conteos, máx 6
+  return [...medidas, ...conteos].slice(0, 6);
 }
 
 // Normaliza un string de formato: "5lt"→"5 lt", "10kg"→"10 kg"
@@ -825,15 +850,35 @@ function parsearProductos(texto) {
       parte = parte.replace(fmtMatch[0], '').trim();
     }
 
+    const UNIDADES_MEDIDA = /^(lt|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|metros?)$/i;
     const UNIDADES = `paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?|bidones?|tambores?|baldes?|galones?|frascos?|tarros?|sachet|sobres?|mt|metros?`;
     const matchFinal  = parte.match(new RegExp(`^(.+?)\\s+(\\d+)\\s*(${UNIDADES})?$`, 'i'));
     const matchInicio = parte.match(new RegExp(`^(\\d+)\\s*(${UNIDADES})?\\s+(.+)$`, 'i'));
     if (matchFinal) {
       const nombre = normalizar(matchFinal[1]);
-      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchFinal[2]), unidad: matchFinal[3] || "unidades", cantidadEspecificada: true, formatoEspecificado });
+      const num  = parseInt(matchFinal[2]);
+      const unid = matchFinal[3] || "";
+      if (nombre.length > 2) {
+        if (unid && UNIDADES_MEDIDA.test(unid) && !formatoEspecificado) {
+          // "toalla 350 mt" → el "350 mt" es especificación de formato, no cantidad
+          items.push({ nombre, cantidad: 1, unidad: "unidades", cantidadEspecificada: false,
+            formatoEspecificado: normalizarFormatoStr(`${num} ${unid}`) });
+        } else {
+          items.push({ nombre, cantidad: num, unidad: unid || "unidades", cantidadEspecificada: true, formatoEspecificado });
+        }
+      }
     } else if (matchInicio) {
       const nombre = normalizar(matchInicio[3]);
-      if (nombre.length > 2) items.push({ nombre, cantidad: parseInt(matchInicio[1]), unidad: matchInicio[2] || "unidades", cantidadEspecificada: true, formatoEspecificado });
+      const num  = parseInt(matchInicio[1]);
+      const unid = matchInicio[2] || "";
+      if (nombre.length > 2) {
+        if (unid && UNIDADES_MEDIDA.test(unid) && !formatoEspecificado) {
+          items.push({ nombre, cantidad: 1, unidad: "unidades", cantidadEspecificada: false,
+            formatoEspecificado: normalizarFormatoStr(`${num} ${unid}`) });
+        } else {
+          items.push({ nombre, cantidad: num, unidad: unid || "unidades", cantidadEspecificada: true, formatoEspecificado });
+        }
+      }
     } else {
       const nombre = normalizar(parte);
       if (nombre.length > 2) items.push({ nombre, cantidad: 1, unidad: "unidades", cantidadEspecificada: false, formatoEspecificado });
