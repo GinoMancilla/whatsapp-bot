@@ -174,9 +174,10 @@ async function handleMessage(phone, text) {
       await sendMessage(phone,
         `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
         `Para cotizarte necesito algunos datos.\n\n` +
-        `📋 Si tienes *RUT de empresa*, ingrésalo ahora.\n` +
-        `Si no, ingresa tu *RUT personal*.\n\n` +
-        `_Ej empresa: 76.123.456-7 · Ej personal: 12.345.678-9_`
+        `Si tienes *RUT de empresa*, ingrésalo.\n` +
+        `De lo contrario, ingresa tu *RUT personal*.\n\n` +
+        `_Ej empresa: 76.123.456-7_\n` +
+        `_Ej personal: 12.345.678-9_`
       );
       session.step = STEPS.WAITING_RUT;
       break;
@@ -344,19 +345,37 @@ async function buscarParaClienteExistente(phone, session, item) {
 
 // ─── Buscar para cliente nuevo (catálogo completo, Precio Lista) ──────────────
 async function buscarParaClienteNuevo(phone, session, item) {
-  const keywords = normalizar(item.nombre).split(" ")
+  const allKeywords = normalizar(item.nombre).split(" ")
     .filter(w => w.length > 2 && !STOP_WORDS_ENVASE.has(w) && !/^\d+$/.test(w));
 
-  // Buscar en todo el catálogo
-  const todoEncontrado = buscarEnCatalogo(session.data.rows, keywords);
+  if (allKeywords.length === 0) {
+    session.data.productosNoEncontrados.push(item.nombre);
+    await sendMessage(phone, `ℹ️ No encontré _"${item.nombre}"_ en nuestro catálogo.\nUn representante revisará disponibilidad.`);
+    session.data.itemsPendientes.shift();
+    await procesarSiguienteProducto(phone, session);
+    return;
+  }
 
-  // Si el cliente especificó talla, filtrar por ella
+  // Fase 1: buscar por primera palabra (anchor principal)
+  const fase1 = buscarEnCatalogo(session.data.rows, [allKeywords[0]]);
+
+  // Fase 2: filtrar resultados por palabras secundarias (con fallback a fase 1)
+  let encontrados = fase1;
+  if (allKeywords.length > 1 && fase1.length > 0) {
+    const secundarias = allKeywords.slice(1);
+    const fase2 = fase1.filter(p => {
+      const desc = normalizar(p.DesProd);
+      return secundarias.some(k => desc.includes(k) || desc.includes(stemES(k)));
+    });
+    if (fase2.length > 0) encontrados = fase2;
+  }
+
+  // Filtrar por talla si fue especificada
   const talla = normalizarTalla(item.nombre);
-  const encontrados = talla
-    ? (todoEncontrado.filter(p => normalizar(p.DesProd).includes(talla)).length > 0
-        ? todoEncontrado.filter(p => normalizar(p.DesProd).includes(talla))
-        : todoEncontrado) // fallback si la talla no existe en catálogo
-    : todoEncontrado;
+  if (talla) {
+    const conTalla = encontrados.filter(p => normalizar(p.DesProd).includes(talla));
+    if (conTalla.length > 0) encontrados = conTalla;
+  }
 
   if (encontrados.length === 0) {
     session.data.productosNoEncontrados.push(item.nombre);
@@ -369,7 +388,7 @@ async function buscarParaClienteNuevo(phone, session, item) {
     return;
   }
 
-  // Si el cliente especificó formato inline ("x 5lt"), filtrar directo
+  // Si el cliente especificó formato inline ("x 5lt", "formato 5 lt"), filtrar directo
   let resultado = encontrados;
   if (item.formatoEspecificado) {
     const fmt = normalizarFormatoStr(item.formatoEspecificado);
@@ -377,11 +396,10 @@ async function buscarParaClienteNuevo(phone, session, item) {
     resultado = filtradosFmt.length > 0 ? filtradosFmt : encontrados;
   }
 
-  // Extraer formatos únicos (litros, kg, ml, etc.)
+  // Extraer formatos únicos (litros, kg, ml, mt, etc.)
   const formatos = extraerFormatos(resultado);
 
   if (formatos.length > 1 && !item.formatoEspecificado) {
-    // Preguntar formato
     session.data.opcionesEncontradas = resultado;
     session.data.formatosDisponibles  = formatos;
     session.step = STEPS.WAITING_FORMATO;
@@ -699,19 +717,32 @@ async function mostrarResumenFinal(phone, session) {
 function buscarProductoHistorial(rows, rutSinDV, nombreBuscado) {
   const haceSeismeses = new Date();
   haceSeismeses.setMonth(haceSeismeses.getMonth() - 6);
-  const keywords = normalizar(nombreBuscado).split(" ").filter(w => w.length > 2 && !/^\d+$/.test(w));
+  const allKeywords = normalizar(nombreBuscado).split(" ").filter(w => w.length > 2 && !/^\d+$/.test(w));
+
+  if (allKeywords.length === 0) return { principal: null, alternativas: [], bajoMargen: false };
 
   const filasCliente = rows.filter(row =>
     (row["CodAuxGSaen"] || "").replace(/[.\-\s]/g, "") === rutSinDV
   );
-  const filasProducto = filasCliente.filter(row => {
+
+  // Fase 1: filtrar por primera palabra
+  const fase1 = filasCliente.filter(row => {
     const desc = normalizar(row["DesProd"] || "");
     const cod  = (row["CodProd"] || "").toLowerCase();
-    return keywords.some(k => {
-      const stem = stemES(k);
-      return desc.includes(k) || desc.includes(stem) || cod.includes(k) || cod.includes(stem);
-    });
+    const k = allKeywords[0], stem = stemES(k);
+    return desc.includes(k) || desc.includes(stem) || cod.includes(k) || cod.includes(stem);
   });
+
+  // Fase 2: refinar por palabras secundarias (con fallback a fase 1)
+  let filasProducto = fase1;
+  if (allKeywords.length > 1 && fase1.length > 0) {
+    const secundarias = allKeywords.slice(1);
+    const fase2 = fase1.filter(row => {
+      const desc = normalizar(row["DesProd"] || "");
+      return secundarias.some(k => desc.includes(k) || desc.includes(stemES(k)));
+    });
+    if (fase2.length > 0) filasProducto = fase2;
+  }
 
   if (filasProducto.length === 0) return { principal: null, alternativas: [], bajoMargen: false };
 
