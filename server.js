@@ -1129,7 +1129,8 @@ async function enviarSolicitudHidroEmail(phone, data) {
     const resend  = new Resend(RESEND_API_KEY);
     const fecha   = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
     const specs   = data.hidroSpecs || {};
-    const baseUrl = process.env.BASE_URL || "https://whatsapp-bot-production.up.railway.app";
+    const baseUrl = process.env.BASE_URL ||
+      (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "https://whatsapp-bot-production.up.railway.app");
     const formUrl = `${baseUrl}/especialista/form?phone=${phone}&nombre=${encodeURIComponent(data.razonSocial)}&token=${VERIFY_TOKEN}`;
 
     const filas = HIDRO_PREGUNTAS.map(p =>
