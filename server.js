@@ -20,6 +20,16 @@ const {
 const sessions = {};
 const hidroPendientes = new Map(); // phone → respuesta del especialista (fallback si sesión expiró)
 
+// ─── Rate limiter (máx 12 mensajes/minuto por usuario) ────────────────────────
+const rateLimiter = new Map();
+setInterval(() => rateLimiter.clear(), 60 * 1000); // limpiar cada minuto
+
+function checkRateLimit(phone) {
+  const count = (rateLimiter.get(phone) || 0) + 1;
+  rateLimiter.set(phone, count);
+  return count <= 12;
+}
+
 const STEPS = {
   START:              "start",
   WAITING_RUT:        "waiting_rut",
@@ -76,9 +86,11 @@ async function responderConsulta(phone, session, pregunta) {
       max_tokens: 250,
       system:
         `Eres el asistente de ventas de CINTEC, empresa chilena de productos de limpieza, higiene y desinfección industrial. ` +
-        `Responde de forma breve y directa (máx 2-3 oraciones, en español). ` +
-        `Si no tienes la información exacta, sugiere contactar a un ejecutivo de ventas. ` +
-        `No inventes precios ni disponibilidad. ` +
+        `Responde SOLO preguntas relacionadas con productos de limpieza, cotizaciones o servicios de CINTEC. ` +
+        `Responde en español, de forma breve (máx 2-3 oraciones). ` +
+        `Si no tienes la información exacta, di "un ejecutivo puede ayudarte con eso". ` +
+        `NUNCA inventes precios, disponibilidad, ni datos de productos. ` +
+        `Si te preguntan algo fuera del ámbito comercial de CINTEC (política, religión, contenido adulto, temas personales), responde solo: "Estoy aquí para ayudarte con cotizaciones de CINTEC." ` +
         (contextLine ? `Contexto de la cotización en curso: ${contextLine}.` : ""),
       messages: [{ role: "user", content: pregunta }],
     });
@@ -145,6 +157,10 @@ app.post("/webhook", async (req, res) => {
     const from = msg.from;
     const text = msg.text?.body?.trim();
     if (!text) return;
+    if (!checkRateLimit(from)) {
+      console.warn(`Rate limit alcanzado: ${from}`);
+      return; // ignorar silenciosamente, no enviar mensaje
+    }
     await handleMessage(from, text);
   } catch (err) {
     console.error("Error:", err.message);
@@ -155,6 +171,26 @@ app.post("/webhook", async (req, res) => {
 async function handleMessage(phone, text) {
   if (!sessions[phone]) sessions[phone] = { step: STEPS.START, data: {} };
   const session = sessions[phone];
+
+  // ── Comando STOP: cerrar conversación (cumplimiento Meta) ──────────────────
+  if (/^(stop|detener|cancelar|salir|para|basta)$/i.test(normalizar(text))) {
+    delete sessions[phone];
+    await sendMessage(phone,
+      `✅ Tu conversación fue cerrada. Escribe *hola* cuando necesites cotizar nuevamente.\n\n` +
+      `_Si necesitas ayuda, un ejecutivo de ventas puede atenderte directamente._`
+    );
+    return;
+  }
+
+  // ── Handoff a ejecutivo humano ─────────────────────────────────────────────
+  if (/hablar con|quiero un ejecutivo|necesito un asesor|agente humano|persona real|vendedor|asesor/i.test(normalizar(text))) {
+    await notificarHandoff(phone, session.data);
+    await sendMessage(phone,
+      `👤 Entendido. Un *ejecutivo de ventas* de CINTEC se pondrá en contacto contigo a la brevedad.\n\n` +
+      `Puedes continuar cotizando mientras tanto, o esperar a ser atendido.`
+    );
+    return;
+  }
 
   if (session.step === STEPS.DONE && /^(hola|nueva|reiniciar|inicio)$/i.test(text)) {
     delete sessions[phone];
@@ -994,6 +1030,27 @@ async function enviarCotizacionCompleta(phone, data) {
   } catch (err) {
     console.error("Error enviando cotización:", err.message);
     await sendMessage(phone, `⚠️ Error al enviar cotización. Por favor intenta nuevamente.`);
+  }
+}
+
+// ─── Notificar handoff a ejecutivo ───────────────────────────────────────────
+async function notificarHandoff(phone, data) {
+  if (!RESEND_API_KEY) return;
+  try {
+    const resend = new Resend(RESEND_API_KEY);
+    const fecha  = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+    await resend.emails.send({
+      from:    "Bot CINTEC <onboarding@resend.dev>",
+      to:      DESTINATION_EMAIL,
+      subject: `👤 Cliente solicita ejecutivo — ${data?.razonSocial || phone}`,
+      html: `<h2>👤 Cliente solicita atención humana</h2>
+        <p><strong>Fecha:</strong> ${fecha}</p>
+        <p><strong>Cliente:</strong> ${data?.razonSocial || "–"} | RUT: ${data?.rut || "–"}</p>
+        <p><strong>WhatsApp:</strong> <a href="https://wa.me/${phone}">+${phone}</a></p>
+        <p>El cliente solicitó hablar con un ejecutivo durante el flujo de cotización.</p>`,
+    });
+  } catch (err) {
+    console.error("Error notificando handoff:", err.message);
   }
 }
 
