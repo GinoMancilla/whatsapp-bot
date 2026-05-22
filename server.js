@@ -22,12 +22,29 @@ const hidroPendientes = new Map(); // phone → respuesta del especialista (fall
 
 // ─── Rate limiter (máx 12 mensajes/minuto por usuario) ────────────────────────
 const rateLimiter = new Map();
-setInterval(() => rateLimiter.clear(), 60 * 1000); // limpiar cada minuto
+setInterval(() => rateLimiter.clear(), 60 * 1000);
 
 function checkRateLimit(phone) {
   const count = (rateLimiter.get(phone) || 0) + 1;
   rateLimiter.set(phone, count);
   return count <= 12;
+}
+
+// ─── Anti-frustración: handoff automático tras 2 errores consecutivos ─────────
+async function registrarError(phone, session) {
+  session.data.erroresConsecutivos = (session.data.erroresConsecutivos || 0) + 1;
+  if (session.data.erroresConsecutivos >= 2) {
+    session.data.erroresConsecutivos = 0;
+    await notificarHandoff(phone, session.data);
+    await sendMessage(phone,
+      `💁 Veo que estás teniendo dificultades. Ya notifiqué a un *ejecutivo de ventas* que te contactará pronto.\n\n` +
+      `Puedes seguir cotizando o escribir *stop* para cerrar.`
+    );
+  }
+}
+
+function resetearErrores(session) {
+  session.data.erroresConsecutivos = 0;
 }
 
 const STEPS = {
@@ -494,6 +511,7 @@ async function manejarFormato(phone, session, text) {
   if (!formatoElegido) {
     const lista = formatos.map((f, i) => `*${i + 1}.* ${f}`).join("\n");
     await sendMessage(phone, `⚠️ No reconocí ese formato. Elige con un número o escribe el formato exacto:\n\n${lista}`);
+    await registrarError(phone, session);
     return;
   }
   const opciones = session.data.opcionesEncontradas.filter(p => {
@@ -501,6 +519,7 @@ async function manejarFormato(phone, session, text) {
     return desc.includes(normalizar(formatoElegido));
   });
 
+  resetearErrores(session);
   await mostrarOpcionesProducto(phone, session, opciones.length > 0 ? opciones : session.data.opcionesEncontradas, session.data.itemActual);
 }
 
@@ -580,6 +599,7 @@ async function manejarEleccionOpcion(phone, session, text) {
       await sendMessage(phone, `Entendido, omitiremos ese producto.`);
     } else {
       await sendMessage(phone, `⚠️ Responde con un número, *todos* o *no*.`);
+      await registrarError(phone, session);
       return;
     }
   }
@@ -601,6 +621,7 @@ async function manejarEleccionOpcion(phone, session, text) {
     return;
   }
 
+  resetearErrores(session);
   await continuarTrasEleccion(phone, session);
 }
 
@@ -619,6 +640,7 @@ async function manejarCantidad(phone, session, text) {
   const num = match ? parseInt(match[0]) : NaN;
   if (isNaN(num) || num < 1) {
     await sendMessage(phone, `⚠️ Ingresa una cantidad válida (número mayor a 0).`);
+    await registrarError(phone, session);
     return;
   }
 
@@ -662,6 +684,7 @@ async function manejarConfirmacion(phone, session, text) {
     const opciones = [resultado.principal, ...resultado.alternativas];
     if (isNaN(num) || num < 1 || num > opciones.length) {
       await sendMessage(phone, `⚠️ Responde con un número entre 1 y ${opciones.length}.`);
+      await registrarError(phone, session);
       return;
     }
     const elegido = opciones[num - 1];
@@ -713,6 +736,7 @@ async function manejarConfirmacion(phone, session, text) {
   }
 
   await sendMessage(phone, `⚠️ No entendí. Por favor responde *sí* o *no*.`);
+  await registrarError(phone, session);
 }
 
 // ─── Siguiente paso tras confirmación ────────────────────────────────────────
