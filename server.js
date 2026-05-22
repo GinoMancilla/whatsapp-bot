@@ -121,13 +121,15 @@ async function responderConsulta(phone, session, pregunta) {
   }
 }
 
-// Palabras de envase/cantidad que no deben usarse como keyword de producto
+// Palabras de envase/cantidad/intención que no deben usarse como keyword de producto
 const STOP_WORDS_ENVASE = new Set([
   "bidon", "bidones", "bolsa", "bolsas", "saco", "sacos",
   "caja", "cajas", "frasco", "frascos", "tarro", "tarros",
   "balde", "baldes", "tambor", "tambores", "galon", "galones",
   "envase", "envases", "botella", "botellas", "de", "del",
   "un", "una", "uno", "unos", "unas", "talla",
+  // Palabras de intención (por si no se stripearon en el parser)
+  "necesito", "quiero", "quisiera", "dame", "busco", "requiero", "preciso",
 ]);
 
 // Convierte "talla m/l/s/xl" → notación catálogo "t/m"/"t/l"/etc.
@@ -917,6 +919,10 @@ function parsearProductos(texto) {
   partes.forEach(parte => {
     parte = parte.trim();
     if (parte.length < 2) return;
+
+    // Limpiar palabras de intención: "necesito lavaloza" → "lavaloza"
+    parte = parte.replace(/^(necesito|quiero|quisiera|dame|me das?|busco|requiero|requerimos?|necesitamos?|queremos?|me puedes? (dar|cotizar)|cotizame|preciso|precisamos?)\s+/i, '').trim();
+
     // Limpiar prefijos de cantidad+envase: "una caja de X" → "X", "un bidón de X" → "X"
     parte = parte.replace(/^(un[ao]?s?|dos|tres|cuatro|cinco)\s+(caja|bidon|bidones|bolsa|saco|frasco|tarro|balde|tambor|galon|envase|botella|paquete|sobre)s?\s+(de\s+)?/i, '').trim();
 
