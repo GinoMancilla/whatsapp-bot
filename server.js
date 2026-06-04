@@ -254,7 +254,7 @@ async function handleMessage(phone, text) {
         );
         break;
       }
-      const rutLimpio = text.replace(/[.\-\s]/g, "").toUpperCase();
+      const rutLimpio = normalizarRUT(text);
       if (!validarRUT(text)) {
         await sendMessage(phone,
           `⚠️ RUT inválido. Ingrésalo nuevamente.\n` +
@@ -265,7 +265,7 @@ async function handleMessage(phone, text) {
       // En Chile, RUTs de empresa son >= 50.000.000 (comienzan con 5, 6, 7, 8 o 9)
       const soloDigitos = rutLimpio.slice(0, -1);
       const esEmpresa   = parseInt(soloDigitos, 10) >= 50000000;
-      session.data.rut              = text.toUpperCase();
+      session.data.rut              = rutLimpio; // siempre guardado sin puntos
       session.data.rutLimpio        = rutLimpio;
       session.data.rutSinDV         = soloDigitos;
       session.data.esperandoRutPersonal = !esEmpresa;
@@ -1295,11 +1295,16 @@ async function sendMessage(to, body) {
 }
 
 // ─── Validación RUT chileno ───────────────────────────────────────────────────
+// Normaliza RUT a solo dígitos + DV, aceptando con/sin puntos, con/sin guion
+function normalizarRUT(rut) {
+  return rut.trim().replace(/\./g, "").replace(/[\s-]/g, "").toUpperCase();
+}
+
 function validarRUT(rut) {
-  const cleaned = rut.replace(/[.\-\s]/g, "");
-  if (!/^\d{7,8}[0-9Kk]$/.test(cleaned)) return false;
+  const cleaned = normalizarRUT(rut);
+  if (!/^\d{7,8}[0-9K]$/.test(cleaned)) return false;
   const body = cleaned.slice(0, -1);
-  const dv   = cleaned.slice(-1).toUpperCase();
+  const dv   = cleaned.slice(-1);
   let sum = 0, mul = 2;
   for (let i = body.length - 1; i >= 0; i--) {
     sum += parseInt(body[i]) * mul;
