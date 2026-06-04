@@ -799,6 +799,11 @@ async function mostrarResumenFinal(phone, session) {
   });
   msg += `*💵 TOTAL: $${total.toLocaleString("es-CL")}*\n\n`;
 
+  const condicionPago = session.data.esClienteNuevo ? "Contado" : "30 días";
+  msg += `🕒 *Vigencia de precios:* 72 horas\n`;
+  msg += `🚚 *Despacho:* Puerto Montt\n`;
+  msg += `💳 *Condición de pago:* ${condicionPago}\n\n`;
+
   if (bajoMargen.length > 0) {
     msg += `⚠️ Estos productos requieren actualización de precios:\n`;
     bajoMargen.forEach(p => { msg += `• ${p.nombre}\n`; });
@@ -1042,7 +1047,13 @@ async function enviarCotizacionCompleta(phone, data) {
             </tr>
           </table>
           <hr style="margin:20px 0;"/>
-          <p style="color:#555; font-size:12px;">Vigencia: 30 días. CINTEC - Sociedad Comercial</p>
+          <table style="width:100%; font-size:13px; color:#444;">
+            <tr>
+              <td>🕒 <strong>Vigencia de precios:</strong> 72 horas</td>
+              <td>🚚 <strong>Despacho:</strong> Puerto Montt</td>
+              <td>💳 <strong>Condición de pago:</strong> ${data.esClienteNuevo ? "Contado" : "30 días"}</td>
+            </tr>
+          </table>
         </div>
       </div>`;
 
