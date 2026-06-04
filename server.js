@@ -242,6 +242,18 @@ async function handleMessage(phone, text) {
       break;
 
     case STEPS.WAITING_RUT: {
+      // Si el texto tiene menos de 6 dígitos no puede ser un RUT — el cliente escribió otra cosa
+      const digitosEnTexto = (text.match(/\d/g) || []).length;
+      if (digitosEnTexto < 6) {
+        await sendMessage(phone,
+          `Para comenzar necesito tu RUT. 😊\n\n` +
+          `Si tienes *RUT de empresa*, ingrésalo.\n` +
+          `De lo contrario, ingresa tu *RUT personal*.\n\n` +
+          `_Ej empresa: 76.123.456-7_\n` +
+          `_Ej personal: 12.345.678-9_`
+        );
+        break;
+      }
       const rutLimpio = text.replace(/[.\-\s]/g, "").toUpperCase();
       if (!validarRUT(text)) {
         await sendMessage(phone,
