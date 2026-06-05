@@ -20,6 +20,31 @@ const {
 const sessions = {};
 const hidroPendientes = new Map(); // phone → respuesta del especialista (fallback si sesión expiró)
 
+// ─── Instancias globales (evitar recrear en cada llamada) ─────────────────────
+const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+const anthropicClient = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
+
+// ─── Cache del catálogo CSV (TTL: 10 minutos) ─────────────────────────────────
+let csvCache = { rows: null, ts: 0 };
+const CSV_CACHE_TTL = 10 * 60 * 1000;
+
+// ─── Deduplicación de mensajes (Meta puede enviar el mismo webhook 2 veces) ───
+const processedMsgIds = new Set();
+setInterval(() => processedMsgIds.clear(), 5 * 60 * 1000);
+
+// ─── Limpieza de sesiones abandonadas (TTL: 30 minutos sin actividad) ─────────
+const SESSION_TTL = 30 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const phone of Object.keys(sessions)) {
+    if (now - (sessions[phone].lastActivity || 0) > SESSION_TTL) {
+      delete sessions[phone];
+    }
+  }
+}, 5 * 60 * 1000);
+
 // ─── Rate limiter (máx 12 mensajes/minuto por usuario) ────────────────────────
 const rateLimiter = new Map();
 setInterval(() => rateLimiter.clear(), 60 * 1000);
@@ -85,9 +110,9 @@ function esUnaConsulta(text) {
 }
 
 async function responderConsulta(phone, session, pregunta) {
-  if (!process.env.ANTHROPIC_API_KEY) return false;
+  if (!anthropicClient) return false;
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = anthropicClient;
 
     // Contexto resumido de la sesión actual
     const confirmados = (session.data.productosConfirmados || [])
@@ -173,12 +198,15 @@ app.post("/webhook", async (req, res) => {
   try {
     const msg  = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!msg) return;
+    // Ignorar mensajes duplicados que Meta reenvía
+    if (processedMsgIds.has(msg.id)) return;
+    processedMsgIds.add(msg.id);
     const from = msg.from;
     const text = msg.text?.body?.trim();
     if (!text) return;
     if (!checkRateLimit(from)) {
       console.warn(`Rate limit alcanzado: ${from}`);
-      return; // ignorar silenciosamente, no enviar mensaje
+      return;
     }
     await handleMessage(from, text);
   } catch (err) {
@@ -190,6 +218,7 @@ app.post("/webhook", async (req, res) => {
 async function handleMessage(phone, text) {
   if (!sessions[phone]) sessions[phone] = { step: STEPS.START, data: {} };
   const session = sessions[phone];
+  session.lastActivity = Date.now();
 
   // ── Comando STOP: cerrar conversación (cumplimiento Meta) ──────────────────
   if (/^(stop|detener|cancelar|salir|para|basta)$/i.test(normalizar(text))) {
@@ -550,7 +579,7 @@ async function mostrarOpcionesProducto(phone, session, opciones, item) {
   let msg = `📋 *Opciones disponibles para "${item.nombre}":*\n\n`;
   lista.forEach((p, i) => {
     const prov = abreviarProveedor(p.Proveedor);
-    const precio = parseFloat((p["Precio Lista"] || "0").replace(/[$.\s]/g,"").replace(",","."));
+    const precio = parsearPrecio(p["Precio Lista"]);
     msg += `*${i + 1}.* ${p.DesProd}\n`;
     msg += `   💰 $${precio.toLocaleString("es-CL")} | 🏭 ${prov}\n\n`;
   });
@@ -574,7 +603,7 @@ async function manejarEleccionOpcion(phone, session, text) {
   if (textNorm === "todos" || textNorm === "todas") {
     // Agregar todos
     lista.forEach(p => {
-      const precio = parseFloat((p["Precio Lista"] || "0").replace(/[$.\s]/g,"").replace(",","."));
+      const precio = parsearPrecio(p["Precio Lista"]);
       session.data.productosConfirmados.push({
         seleccionado: { CodProd: p.CodProd, DesProd: p.DesProd, precio, fecha: "-", Proveedor: p.Proveedor },
         cantidad: item.cantidad,
@@ -588,7 +617,7 @@ async function manejarEleccionOpcion(phone, session, text) {
     const num = parseInt(text);
     if (lista.length === 1 && /^(si|sí|s|yes|ok)$/i.test(textNorm)) {
       const p = lista[0];
-      const precio = parseFloat((p["Precio Lista"] || "0").replace(/[$.\s]/g,"").replace(",","."));
+      const precio = parsearPrecio(p["Precio Lista"]);
       session.data.productosConfirmados.push({
         seleccionado: { CodProd: p.CodProd, DesProd: p.DesProd, precio, fecha: "-", Proveedor: p.Proveedor },
         cantidad: item.cantidad,
@@ -599,7 +628,7 @@ async function manejarEleccionOpcion(phone, session, text) {
       await sendMessage(phone, `✅ Producto confirmado.`);
     } else if (!isNaN(num) && num >= 1 && num <= lista.length) {
       const p = lista[num - 1];
-      const precio = parseFloat((p["Precio Lista"] || "0").replace(/[$.\s]/g,"").replace(",","."));
+      const precio = parsearPrecio(p["Precio Lista"]);
       session.data.productosConfirmados.push({
         seleccionado: { CodProd: p.CodProd, DesProd: p.DesProd, precio, fecha: "-", Proveedor: p.Proveedor },
         cantidad: item.cantidad,
@@ -860,8 +889,8 @@ function buscarProductoHistorial(rows, rutSinDV, nombreBuscado) {
     const fecha    = parts.length === 3
       ? new Date(`${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}`)
       : new Date(fechaStr);
-    const precio = parseFloat((row["Ultimo Precio"] || "0").replace(/[$.\s]/g,"").replace(",","."));
-    const costo  = parseFloat((row["Costo Vta"] || "0").replace(/[$.\s]/g,"").replace(",",".")) || 0;
+    const precio = parsearPrecio(row["Ultimo Precio"]);
+    const costo  = parsearPrecio(row["Costo Vta"]);
     const margen = precio > 0 ? (precio - costo) / precio : 0;
     const prodObj = { CodProd: row["CodProd"], DesProd: row["DesProd"], precio, fecha: fechaStr, margen: (margen*100).toFixed(1) };
     if (fecha >= haceSeismeses && margen >= 0.20) validos.push(prodObj);
@@ -879,9 +908,13 @@ function buscarProductoHistorial(rows, rutSinDV, nombreBuscado) {
   return { principal: unicosArr[0], alternativas: unicosArr.slice(1, 3), bajoMargen: false };
 }
 
+// ─── Helper: parsear precio desde string CSV ──────────────────────────────────
+function parsearPrecio(str) {
+  return parseFloat((str || "0").replace(/[$.\s]/g, "").replace(",", ".")) || 0;
+}
+
 // ─── Buscar en catálogo completo ──────────────────────────────────────────────
 function buscarEnCatalogo(rows, keywords) {
-  // Deduplicar por CodProd tomando solo una fila por producto
   const unicosPorCod = {};
   rows.forEach(row => {
     if (!unicosPorCod[row["CodProd"]]) unicosPorCod[row["CodProd"]] = row;
@@ -889,16 +922,14 @@ function buscarEnCatalogo(rows, keywords) {
   const catalogo = Object.values(unicosPorCod);
 
   return catalogo.filter(row => {
-    const desc = normalizar(row["DesProd"] || "");
-    const cod  = (row["CodProd"] || "").toLowerCase();
-    const precio = parseFloat((row["Precio Lista"] || "0").replace(/[$.\s]/g,"").replace(",","."));
+    const desc  = normalizar(row["DesProd"] || "");
+    const cod   = (row["CodProd"] || "").toLowerCase();
+    const precio = parsearPrecio(row["Precio Lista"]);
     if (precio <= 0) return false;
-    const match = keywords.some(k => {
+    return keywords.some(k => {
       const stem = stemES(k);
       return desc.includes(k) || desc.includes(stem) || cod.includes(k) || cod.includes(stem);
     });
-    if (match) console.log(`Encontrado: ${row["DesProd"]} | PrecioLista: ${row["Precio Lista"]}`);
-    return match;
   });
 }
 
@@ -992,13 +1023,23 @@ function parsearProductos(texto) {
   return unicos;
 }
 
-// ─── Cargar CSV ───────────────────────────────────────────────────────────────
+// ─── Cargar CSV (cacheado 10 min, timeout 8s, fallback a cache vencido) ───────
 async function cargarCSV() {
+  const now = Date.now();
+  if (csvCache.rows && (now - csvCache.ts) < CSV_CACHE_TTL) {
+    return csvCache.rows;
+  }
   try {
-    const resp = await axios.get(GOOGLE_SHEETS_CSV_URL);
-    return parse(resp.data, { columns: true, skip_empty_lines: true });
+    const resp = await axios.get(GOOGLE_SHEETS_CSV_URL, { timeout: 8000 });
+    const rows = parse(resp.data, { columns: true, skip_empty_lines: true });
+    csvCache = { rows, ts: now };
+    return rows;
   } catch (err) {
     console.error("Error cargando CSV:", err.message);
+    if (csvCache.rows) {
+      console.warn("Usando cache CSV vencido como fallback");
+      return csvCache.rows;
+    }
     return null;
   }
 }
@@ -1006,7 +1047,7 @@ async function cargarCSV() {
 // ─── Enviar cotización ────────────────────────────────────────────────────────
 async function enviarCotizacionCompleta(phone, data) {
   try {
-    const resend      = new Resend(RESEND_API_KEY);
+    const resend      = resendClient;
     const fecha       = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
     const confirmados = data.productosConfirmados;
 
@@ -1088,9 +1129,9 @@ async function enviarCotizacionCompleta(phone, data) {
 
 // ─── Notificar handoff a ejecutivo ───────────────────────────────────────────
 async function notificarHandoff(phone, data) {
-  if (!RESEND_API_KEY) return;
+  if (!resendClient) return;
   try {
-    const resend = new Resend(RESEND_API_KEY);
+    const resend = resendClient;
     const fecha  = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
     await resend.emails.send({
       from:    "Bot CINTEC <onboarding@resend.dev>",
@@ -1109,8 +1150,9 @@ async function notificarHandoff(phone, data) {
 
 // ─── Notificar bajo margen ────────────────────────────────────────────────────
 async function notificarBajoMargen(phone, data, productosBajoMargen) {
+  if (!resendClient) return;
   try {
-    const resend = new Resend(RESEND_API_KEY);
+    const resend = resendClient;
     const fecha  = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
     let filas = "";
     productosBajoMargen.forEach(p => {
@@ -1211,7 +1253,7 @@ async function manejarHidroEmail(phone, session, text) {
   }
   const emailCliente = text.toLowerCase();
   const respuesta    = session.data.hidroRespuesta || "";
-  const resend       = new Resend(RESEND_API_KEY);
+  const resend       = resendClient;
   try {
     await resend.emails.send({
       from: "Bot CINTEC <onboarding@resend.dev>",
@@ -1235,8 +1277,9 @@ async function manejarHidroEmail(phone, session, text) {
 }
 
 async function enviarSolicitudHidroEmail(phone, data) {
+  if (!resendClient) return;
   try {
-    const resend  = new Resend(RESEND_API_KEY);
+    const resend  = resendClient;
     const fecha   = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
     const specs   = data.hidroSpecs || {};
     const baseUrl = process.env.BASE_URL ||
@@ -1275,8 +1318,9 @@ async function enviarSolicitudHidroEmail(phone, data) {
 
 // ─── Notificar interno ────────────────────────────────────────────────────────
 async function notificarInterno(phone, data) {
+  if (!resendClient) return;
   try {
-    const resend = new Resend(RESEND_API_KEY);
+    const resend = resendClient;
     const fecha  = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
     await resend.emails.send({
       from: "Bot CINTEC <onboarding@resend.dev>",
@@ -1327,6 +1371,10 @@ function validarRUT(rut) {
 }
 
 // ─── Especialista: formulario y recepción de cotización hidrolavadora ─────────
+function escapeHtml(str) {
+  return (str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 app.get("/especialista/form", (req, res) => {
   const { phone, nombre, token } = req.query;
   if (!phone || !token) return res.status(400).send("Parámetros inválidos.");
@@ -1348,13 +1396,13 @@ app.get("/especialista/form", (req, res) => {
 <body>
   <h2>🔩 Responder cotización hidrolavadora</h2>
   <div class="info">
-    <strong>Cliente:</strong> ${nombre || "–"}<br>
-    <strong>WhatsApp:</strong> +${phone}
+    <strong>Cliente:</strong> ${escapeHtml(nombre)}<br>
+    <strong>WhatsApp:</strong> +${escapeHtml(phone)}
   </div>
   <p>Escribe la cotización del equipo recomendado (modelo, precio, características, condiciones):</p>
   <form method="POST" action="/especialista/cotizacion">
-    <input type="hidden" name="phone" value="${phone}">
-    <input type="hidden" name="token" value="${token}">
+    <input type="hidden" name="phone" value="${escapeHtml(phone)}">
+    <input type="hidden" name="token" value="${escapeHtml(token)}">
     <textarea name="respuesta" placeholder="Ej: Recomendamos KARCHER HD 7/18-4 Classic — Monofásica, 180 bar, 18 lt/min...&#10;Precio neto: $850.000&#10;Condiciones: ..." required></textarea>
     <br>
     <button type="submit">📩 Enviar cotización al cliente</button>
