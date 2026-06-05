@@ -4,6 +4,7 @@ const axios = require("axios");
 const { Resend } = require("resend");
 const { parse } = require("csv-parse/sync");
 const Anthropic = require("@anthropic-ai/sdk");
+const fs = require("fs");
 
 const app = express();
 app.use(express.json());
@@ -25,6 +26,62 @@ const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 const anthropicClient = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
+
+// ─── Registro persistente de cotizaciones y contactos ────────────────────────
+const LOG_FILE = process.env.LOG_PATH || "./cotizaciones.json";
+let cotizacionesLog = [];
+
+try {
+  if (fs.existsSync(LOG_FILE)) {
+    const contenido = fs.readFileSync(LOG_FILE, "utf8").trim();
+    if (contenido) cotizacionesLog = JSON.parse(contenido);
+    console.log(`📊 Log cargado: ${cotizacionesLog.length} registros`);
+  }
+} catch (err) {
+  console.warn("No se pudo cargar el log de cotizaciones:", err.message);
+}
+
+function guardarLog() {
+  try { fs.writeFileSync(LOG_FILE, JSON.stringify(cotizacionesLog, null, 2)); }
+  catch (err) { console.error("Error guardando log:", err.message); }
+}
+
+function registrarCotizacion(phone, data) {
+  cotizacionesLog.push({
+    id:            `COT-${Date.now()}`,
+    tipo:          "cotizacion",
+    timestamp:     new Date().toISOString(),
+    phone,
+    rut:           data.rut || "",
+    razonSocial:   data.razonSocial || "",
+    esClienteNuevo: !!data.esClienteNuevo,
+    emailCliente:  data.emailCliente || "",
+    productos:     (data.productosConfirmados || []).map(item => ({
+      codigo:      item.seleccionado?.CodProd || "",
+      descripcion: item.seleccionado?.DesProd || "",
+      precio:      item.seleccionado?.precio  || 0,
+      cantidad:    item.cantidad || 1,
+      unidad:      item.unidad   || "unidades",
+      subtotal:    (item.seleccionado?.precio || 0) * (item.cantidad || 1),
+    })),
+    total: (data.productosConfirmados || []).reduce(
+      (sum, item) => sum + (item.seleccionado?.precio || 0) * (item.cantidad || 1), 0
+    ),
+  });
+  guardarLog();
+}
+
+function registrarContacto(phone, nombre, motivo) {
+  cotizacionesLog.push({
+    id:        `CTT-${Date.now()}`,
+    tipo:      "contacto",
+    timestamp: new Date().toISOString(),
+    phone,
+    nombre:    nombre || "",
+    motivo:    motivo || "",
+  });
+  guardarLog();
+}
 
 // ─── Cache del catálogo CSV (TTL: 10 minutos) ─────────────────────────────────
 let csvCache = { rows: null, ts: 0 };
@@ -74,6 +131,9 @@ function resetearErrores(session) {
 
 const STEPS = {
   START:              "start",
+  MENU_INICIO:        "menu_inicio",
+  CONTACTO_NOMBRE:    "contacto_nombre",
+  CONTACTO_MOTIVO:    "contacto_motivo",
   WAITING_RUT:        "waiting_rut",
   WAITING_RAZON:      "waiting_razon",
   WAITING_PRODUTOS:   "waiting_productos",
@@ -261,13 +321,23 @@ async function handleMessage(phone, text) {
     case STEPS.START:
       await sendMessage(phone,
         `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
-        `Para cotizarte necesito algunos datos.\n\n` +
-        `Si tienes *RUT de empresa*, ingrésalo.\n` +
-        `De lo contrario, ingresa tu *RUT personal*.\n\n` +
-        `_Ej empresa: 76.123.456-7_\n` +
-        `_Ej personal: 12.345.678-9_`
+        `¿En qué te podemos ayudar hoy?\n\n` +
+        `*1.* 📦 Cotizar productos\n` +
+        `*2.* 👤 Contactar con un ejecutivo`
       );
-      session.step = STEPS.WAITING_RUT;
+      session.step = STEPS.MENU_INICIO;
+      break;
+
+    case STEPS.MENU_INICIO:
+      await manejarMenuInicio(phone, session, text);
+      break;
+
+    case STEPS.CONTACTO_NOMBRE:
+      await manejarContactoNombre(phone, session, text);
+      break;
+
+    case STEPS.CONTACTO_MOTIVO:
+      await manejarContactoMotivo(phone, session, text);
       break;
 
     case STEPS.WAITING_RUT: {
@@ -376,6 +446,105 @@ async function handleMessage(phone, text) {
     case STEPS.DONE:
       await sendMessage(phone, `Tu solicitud fue procesada. Escribe *hola* para una nueva cotización.`);
       break;
+  }
+}
+
+// ─── Menú inicial ────────────────────────────────────────────────────────────
+async function manejarMenuInicio(phone, session, text) {
+  const t = normalizar(text);
+
+  // Detección de intención de contacto (sin cotización)
+  const esContacto = /^2$/.test(t) ||
+    /hablar con|contactar|comunicarme|necesito hablar|quiero hablar|hablar con alguien|ejecutivo|asesor|vendedor|persona real|agente|llamarme|me llamen|me pueden llamar|consulta|duda|problema|reclamo|queja|factura|boleta|pedido|horario|direccion|sucursal|informacion/
+    .test(t);
+
+  // Detección de intención de cotización directa
+  const esCotizacion = /^1$/.test(t) ||
+    /cotizar|cotizacion|precio|productos?|necesito|quiero|busco|comprar|pedir|cuanto|cuanto sale|lavaloza|toalla|guante|desinfect|limpiez|higiene|quimico/
+    .test(t);
+
+  if (esContacto) {
+    session.step = STEPS.CONTACTO_NOMBRE;
+    await sendMessage(phone,
+      `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n` +
+      `¿Cuál es tu *nombre* para informarle?`
+    );
+    return;
+  }
+
+  if (esCotizacion) {
+    session.step = STEPS.WAITING_RUT;
+    await sendMessage(phone,
+      `📦 ¡Perfecto! Para cotizarte necesito algunos datos.\n\n` +
+      `Si tienes *RUT de empresa*, ingrésalo.\n` +
+      `De lo contrario, ingresa tu *RUT personal*.\n\n` +
+      `_Ej empresa: 76.123.456-7_\n` +
+      `_Ej personal: 12.345.678-9_`
+    );
+    return;
+  }
+
+  // No se entendió la opción → repetir menú
+  await sendMessage(phone,
+    `No entendí tu selección. Por favor elige una opción:\n\n` +
+    `*1.* 📦 Cotizar productos\n` +
+    `*2.* 👤 Contactar con un ejecutivo`
+  );
+}
+
+// ─── Flujo de contacto con ejecutivo ─────────────────────────────────────────
+async function manejarContactoNombre(phone, session, text) {
+  if (text.length < 2) {
+    await sendMessage(phone, `⚠️ Ingresa tu nombre para continuar.`);
+    return;
+  }
+  session.data.nombreContacto = text;
+  session.step = STEPS.CONTACTO_MOTIVO;
+  await sendMessage(phone,
+    `¡Hola, *${text}*! 👋\n\n` +
+    `¿En qué podemos ayudarte? Cuéntanos brevemente el motivo de tu consulta.`
+  );
+}
+
+async function manejarContactoMotivo(phone, session, text) {
+  const nombre = session.data.nombreContacto || "Cliente";
+  session.data.motivoContacto = text;
+
+  await notificarContactoEjecutivo(phone, nombre, text);
+  registrarContacto(phone, nombre, text);
+
+  await sendMessage(phone,
+    `✅ ¡Listo, *${nombre}*! Tu solicitud fue enviada a nuestro equipo.\n\n` +
+    `Un *ejecutivo de CINTEC* se pondrá en contacto contigo a la brevedad por este mismo número.\n\n` +
+    `_Si necesitas cotizar productos mientras tanto, escribe *hola* para volver al menú._`
+  );
+  session.step = STEPS.DONE;
+  setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
+}
+
+async function notificarContactoEjecutivo(phone, nombre, motivo) {
+  if (!resendClient) return;
+  try {
+    const fecha = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+    await resendClient.emails.send({
+      from:    "Bot CINTEC <onboarding@resend.dev>",
+      to:      DESTINATION_EMAIL,
+      subject: `📞 Cliente solicita contacto — ${nombre}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:24px;border:2px solid #3498db;border-radius:8px;">
+          <h2 style="color:#3498db;">📞 Solicitud de contacto con ejecutivo</h2>
+          <p><strong>Fecha:</strong> ${fecha}</p>
+          <p><strong>Nombre:</strong> ${nombre}</p>
+          <p><strong>WhatsApp:</strong> <a href="https://wa.me/${phone}">+${phone}</a></p>
+          <p><strong>Motivo:</strong></p>
+          <blockquote style="background:#f5f5f5;padding:12px;border-left:4px solid #3498db;border-radius:4px;">
+            ${motivo}
+          </blockquote>
+          <p style="margin-top:16px;">⚡ Acción requerida: contactar al cliente a la brevedad.</p>
+        </div>`,
+    });
+  } catch (err) {
+    console.error("Error notificando contacto:", err.message);
   }
 }
 
@@ -1116,6 +1285,7 @@ async function enviarCotizacionCompleta(phone, data) {
         ${htmlCotizacion}`,
     });
 
+    registrarCotizacion(phone, data);
     await sendMessage(phone,
       `✅ ¡Listo! Tu cotización fue enviada a *${data.emailCliente}*.\n\n` +
       `¡Gracias por preferirnos! Escribe *hola* si necesitas algo más. 🙏`
@@ -1439,6 +1609,173 @@ app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), asy
   <h2 style="color:#27ae60">✅ Cotización enviada al cliente</h2>
   <p>El cliente recibirá el mensaje por WhatsApp y podrá indicar su correo.</p>
 </body></html>`);
+});
+
+// ─── Reporte de estadísticas ──────────────────────────────────────────────────
+app.get("/reporte", (req, res) => {
+  if (req.query.token !== VERIFY_TOKEN) return res.status(401).send("No autorizado.");
+
+  const cotizaciones = cotizacionesLog.filter(e => e.tipo === "cotizacion");
+  const contactos    = cotizacionesLog.filter(e => e.tipo === "contacto");
+
+  const nuevos     = cotizaciones.filter(c => c.esClienteNuevo).length;
+  const existentes = cotizaciones.filter(c => !c.esClienteNuevo).length;
+  const totalMonto = cotizaciones.reduce((s, c) => s + (c.total || 0), 0);
+
+  // Top productos más cotizados
+  const prodMap = {};
+  cotizaciones.forEach(c => {
+    (c.productos || []).forEach(p => {
+      const k = p.codigo || p.descripcion;
+      if (!prodMap[k]) prodMap[k] = { descripcion: p.descripcion || k, veces: 0, unidades: 0 };
+      prodMap[k].veces++;
+      prodMap[k].unidades += p.cantidad;
+    });
+  });
+  const topProductos = Object.values(prodMap).sort((a, b) => b.veces - a.veces).slice(0, 10);
+
+  // Cotizaciones por día (últimos 30 días)
+  const porDia = {};
+  const hace30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  cotizaciones.filter(c => new Date(c.timestamp).getTime() > hace30).forEach(c => {
+    const dia = c.timestamp.slice(0, 10);
+    porDia[dia] = (porDia[dia] || 0) + 1;
+  });
+
+  const filasProductos = topProductos.map((p, i) => `
+    <tr style="background:${i % 2 === 0 ? "#fff" : "#f9f9f9"}">
+      <td style="padding:8px 12px">${i + 1}</td>
+      <td style="padding:8px 12px">${p.descripcion}</td>
+      <td style="padding:8px 12px;text-align:center">${p.veces}</td>
+      <td style="padding:8px 12px;text-align:center">${p.unidades}</td>
+    </tr>`).join("");
+
+  const filasRecientes = [...cotizaciones].reverse().slice(0, 20).map(c => `
+    <tr>
+      <td style="padding:6px 10px;font-size:12px">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago"})}</td>
+      <td style="padding:6px 10px">${c.razonSocial}</td>
+      <td style="padding:6px 10px;text-align:center">${c.esClienteNuevo ? "🆕 Nuevo" : "✅ Existente"}</td>
+      <td style="padding:6px 10px;text-align:right">$${(c.total || 0).toLocaleString("es-CL")}</td>
+      <td style="padding:6px 10px;font-size:12px">${c.emailCliente}</td>
+    </tr>`).join("");
+
+  const filasContactos = [...contactos].reverse().slice(0, 20).map(c => `
+    <tr>
+      <td style="padding:6px 10px;font-size:12px">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago"})}</td>
+      <td style="padding:6px 10px">${c.nombre}</td>
+      <td style="padding:6px 10px">+${c.phone}</td>
+      <td style="padding:6px 10px">${c.motivo}</td>
+    </tr>`).join("");
+
+  const diasLabels = Object.keys(porDia).sort().map(d => `"${d}"`).join(",");
+  const diasValues = Object.keys(porDia).sort().map(d => porDia[d]).join(",");
+
+  res.send(`<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Reporte CINTEC Bot</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:Arial,sans-serif; background:#f0f2f5; color:#333; }
+    .header { background:#c0392b; color:white; padding:20px 32px; }
+    .header h1 { font-size:22px; }
+    .header p  { font-size:13px; opacity:.8; margin-top:4px; }
+    .content { padding:24px 32px; }
+    .cards { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:28px; }
+    .card { background:white; border-radius:10px; padding:20px 24px; flex:1; min-width:160px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+    .card .label { font-size:12px; color:#888; text-transform:uppercase; letter-spacing:.5px; }
+    .card .value { font-size:28px; font-weight:bold; margin-top:6px; color:#c0392b; }
+    .card .sub   { font-size:12px; color:#aaa; margin-top:4px; }
+    .section { background:white; border-radius:10px; padding:20px 24px; margin-bottom:24px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+    .section h2 { font-size:15px; color:#555; margin-bottom:16px; border-bottom:1px solid #eee; padding-bottom:10px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th { background:#f5f5f5; padding:8px 12px; text-align:left; font-size:12px; color:#777; text-transform:uppercase; }
+    tr:hover td { background:#fafafa; }
+    canvas { max-height:200px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="header">
+    <h1>📊 Reporte CINTEC Bot</h1>
+    <p>Generado el ${new Date().toLocaleString("es-CL",{timeZone:"America/Santiago"})}</p>
+  </div>
+  <div class="content">
+    <div class="cards">
+      <div class="card">
+        <div class="label">Total cotizaciones</div>
+        <div class="value">${cotizaciones.length}</div>
+      </div>
+      <div class="card">
+        <div class="label">Clientes nuevos</div>
+        <div class="value" style="color:#27ae60">${nuevos}</div>
+        <div class="sub">${cotizaciones.length ? Math.round(nuevos / cotizaciones.length * 100) : 0}% del total</div>
+      </div>
+      <div class="card">
+        <div class="label">Clientes existentes</div>
+        <div class="value" style="color:#2980b9">${existentes}</div>
+        <div class="sub">${cotizaciones.length ? Math.round(existentes / cotizaciones.length * 100) : 0}% del total</div>
+      </div>
+      <div class="card">
+        <div class="label">Monto total cotizado</div>
+        <div class="value" style="font-size:20px">$${totalMonto.toLocaleString("es-CL")}</div>
+      </div>
+      <div class="card">
+        <div class="label">Solicitudes de contacto</div>
+        <div class="value" style="color:#8e44ad">${contactos.length}</div>
+      </div>
+    </div>
+
+    ${Object.keys(porDia).length > 0 ? `
+    <div class="section">
+      <h2>📈 Cotizaciones por día (últimos 30 días)</h2>
+      <canvas id="chart"></canvas>
+    </div>` : ""}
+
+    <div class="section">
+      <h2>🏆 Top productos más cotizados</h2>
+      ${topProductos.length === 0 ? "<p style='color:#aaa;font-size:13px'>Sin datos aún.</p>" : `
+      <table>
+        <tr><th>#</th><th>Producto</th><th style="text-align:center">Veces cotizado</th><th style="text-align:center">Unidades total</th></tr>
+        ${filasProductos}
+      </table>`}
+    </div>
+
+    <div class="section">
+      <h2>📋 Últimas cotizaciones</h2>
+      ${cotizaciones.length === 0 ? "<p style='color:#aaa;font-size:13px'>Sin cotizaciones registradas.</p>" : `
+      <table>
+        <tr><th>Fecha</th><th>Cliente</th><th>Tipo</th><th style="text-align:right">Total</th><th>Email</th></tr>
+        ${filasRecientes}
+      </table>`}
+    </div>
+
+    <div class="section">
+      <h2>📞 Solicitudes de contacto con ejecutivo</h2>
+      ${contactos.length === 0 ? "<p style='color:#aaa;font-size:13px'>Sin solicitudes registradas.</p>" : `
+      <table>
+        <tr><th>Fecha</th><th>Nombre</th><th>WhatsApp</th><th>Motivo</th></tr>
+        ${filasContactos}
+      </table>`}
+    </div>
+  </div>
+
+  ${Object.keys(porDia).length > 0 ? `
+  <script>
+    new Chart(document.getElementById("chart"), {
+      type: "bar",
+      data: {
+        labels: [${diasLabels}],
+        datasets: [{ label: "Cotizaciones", data: [${diasValues}],
+          backgroundColor: "rgba(192,57,43,.7)", borderRadius: 4 }]
+      },
+      options: { plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 } } } }
+    });
+  </script>` : ""}
+</body>
+</html>`);
 });
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
