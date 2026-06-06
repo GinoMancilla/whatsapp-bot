@@ -290,13 +290,30 @@ async function handleMessage(phone, text) {
     return;
   }
 
-  // ── Handoff a ejecutivo humano ─────────────────────────────────────────────
-  if (/hablar con|quiero un ejecutivo|necesito un asesor|agente humano|persona real|vendedor|asesor/i.test(normalizar(text))) {
-    await notificarHandoff(phone, session.data);
-    await sendMessage(phone,
-      `👤 Entendido. Un *ejecutivo de ventas* de CINTEC se pondrá en contacto contigo a la brevedad.\n\n` +
-      `Puedes continuar cotizando mientras tanto, o esperar a ser atendido.`
-    );
+  // ── Solicitud de ejecutivo humano (desde cualquier punto del flujo) ─────────
+  // No interceptar si ya está en el flujo de contacto para evitar loops
+  const enFlujoContacto = [STEPS.CONTACTO_NOMBRE, STEPS.CONTACTO_MOTIVO].includes(session.step);
+  if (!enFlujoContacto && /hablar con|quiero un ejecutivo|necesito un asesor|agente humano|persona real|vendedor|asesor|contactar(me)?|comunicarme/i.test(normalizar(text))) {
+    if (session.data.razonSocial) {
+      // Ya tenemos su nombre (estaba en medio de una cotización): notificar de inmediato
+      await notificarContactoEjecutivo(phone, session.data.razonSocial, "Solicitó ejecutivo durante cotización");
+      registrarContacto(phone, session.data.razonSocial, "Solicitó ejecutivo durante cotización");
+      await sendMessage(phone,
+        `👤 Entendido, *${session.data.razonSocial}*. Un *ejecutivo de ventas* de CINTEC ` +
+        `se pondrá en contacto contigo a la brevedad.\n\n` +
+        `_Escribe *hola* si necesitas algo más._`
+      );
+    } else {
+      // Sin nombre aún: pedir nombre antes de notificar
+      session.step = STEPS.CONTACTO_NOMBRE;
+      await sendMessage(phone,
+        `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n` +
+        `¿Cuál es tu *nombre* para informarle?`
+      );
+      return;
+    }
+    session.step = STEPS.DONE;
+    setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
     return;
   }
 
@@ -444,7 +461,9 @@ async function handleMessage(phone, text) {
       break;
 
     case STEPS.DONE:
-      await sendMessage(phone, `Tu solicitud fue procesada. Escribe *hola* para una nueva cotización.`);
+      await sendMessage(phone,
+        `✅ Tu solicitud fue procesada.\n\nEscribe *hola* cuando necesites cotizar o contactar a un ejecutivo.`
+      );
       break;
   }
 }
