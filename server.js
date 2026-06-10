@@ -568,11 +568,11 @@ async function notificarContactoEjecutivo(phone, nombre, motivo) {
         <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:24px;border:2px solid #3498db;border-radius:8px;">
           <h2 style="color:#3498db;">📞 Solicitud de contacto con ejecutivo</h2>
           <p><strong>Fecha:</strong> ${fecha}</p>
-          <p><strong>Nombre:</strong> ${nombre}</p>
-          <p><strong>WhatsApp:</strong> <a href="https://wa.me/${phone}">+${phone}</a></p>
+          <p><strong>Nombre:</strong> ${escapeHtml(nombre)}</p>
+          <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
           <p><strong>Motivo:</strong></p>
           <blockquote style="background:#f5f5f5;padding:12px;border-left:4px solid #3498db;border-radius:4px;">
-            ${motivo}
+            ${escapeHtml(motivo)}
           </blockquote>
           <p style="margin-top:16px;">⚡ Acción requerida: contactar al cliente a la brevedad.</p>
         </div>`,
@@ -1261,10 +1261,10 @@ async function enviarCotizacionCompleta(phone, data) {
       const subtotal = p.precio * item.cantidad;
       total += subtotal;
       filas += `<tr>
-        <td style="padding:8px; border-bottom:1px solid #eee;">${p.CodProd}</td>
-        <td style="padding:8px; border-bottom:1px solid #eee;">${p.DesProd}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee;">${escapeHtml(p.CodProd)}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee;">${escapeHtml(p.DesProd)}</td>
         <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">$${p.precio.toLocaleString("es-CL")}</td>
-        <td style="padding:8px; border-bottom:1px solid #eee; text-align:center;">${item.cantidad} ${item.unidad}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:center;">${item.cantidad} ${escapeHtml(item.unidad)}</td>
         <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">$${subtotal.toLocaleString("es-CL")}</td>
       </tr>`;
     });
@@ -1275,8 +1275,8 @@ async function enviarCotizacionCompleta(phone, data) {
           <h2 style="color:white; margin:0;">COTIZACIÓN CINTEC</h2>
         </div>
         <div style="padding:20px;">
-          <p>Estimado/a <strong>${data.razonSocial}</strong>,</p>
-          <p><strong>Fecha:</strong> ${fecha} &nbsp; <strong>RUT:</strong> ${data.rut}</p>
+          <p>Estimado/a <strong>${escapeHtml(data.razonSocial)}</strong>,</p>
+          <p><strong>Fecha:</strong> ${fecha} &nbsp; <strong>RUT:</strong> ${escapeHtml(data.rut)}</p>
           ${data.esClienteNuevo ? '<p><em>Precios según lista vigente.</em></p>' : ''}
           <table style="width:100%; border-collapse:collapse; margin-top:10px;">
             <tr style="background:#c0392b; color:white;">
@@ -1313,8 +1313,8 @@ async function enviarCotizacionCompleta(phone, data) {
       to: DESTINATION_EMAIL,
       subject: `📦 Cotización enviada - ${data.razonSocial}${data.esClienteNuevo ? " (CLIENTE NUEVO)" : ""}`,
       html: `<h2 style="color:#c0392b;">📲 Cotización enviada vía WhatsApp</h2>
-        <p><strong>Cliente:</strong> ${data.razonSocial} | RUT: ${data.rut}</p>
-        <p><strong>Email:</strong> ${data.emailCliente} | WhatsApp: +${phone}</p>
+        <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${escapeHtml(data.rut)}</p>
+        <p><strong>Email:</strong> ${escapeHtml(data.emailCliente)} | WhatsApp: +${escapeHtml(phone)}</p>
         <p><strong>Tipo:</strong> ${data.esClienteNuevo ? "🆕 Cliente nuevo (Precio Lista)" : "✅ Cliente existente"}</p>
         ${htmlCotizacion}`,
     });
@@ -1343,8 +1343,8 @@ async function notificarHandoff(phone, data) {
       subject: `👤 Cliente solicita ejecutivo — ${data?.razonSocial || phone}`,
       html: `<h2>👤 Cliente solicita atención humana</h2>
         <p><strong>Fecha:</strong> ${fecha}</p>
-        <p><strong>Cliente:</strong> ${data?.razonSocial || "–"} | RUT: ${data?.rut || "–"}</p>
-        <p><strong>WhatsApp:</strong> <a href="https://wa.me/${phone}">+${phone}</a></p>
+        <p><strong>Cliente:</strong> ${escapeHtml(data?.razonSocial || "–")} | RUT: ${escapeHtml(data?.rut || "–")}</p>
+        <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
         <p>El cliente solicitó hablar con un ejecutivo durante el flujo de cotización.</p>`,
     });
   } catch (err) {
@@ -1361,10 +1361,10 @@ async function notificarBajoMargen(phone, data, productosBajoMargen) {
     let filas = "";
     productosBajoMargen.forEach(p => {
       filas += `<tr>
-        <td style="padding:8px;">${p.producto?.CodProd || "-"}</td>
-        <td style="padding:8px;">${p.producto?.DesProd || p.nombre}</td>
-        <td style="padding:8px;">${p.cantidad} ${p.unidad}</td>
-        <td style="padding:8px; color:#e74c3c;">${p.producto?.margen || "-"}%</td>
+        <td style="padding:8px;">${escapeHtml(p.producto?.CodProd || "-")}</td>
+        <td style="padding:8px;">${escapeHtml(p.producto?.DesProd || p.nombre)}</td>
+        <td style="padding:8px;">${escapeHtml(String(p.cantidad))} ${escapeHtml(p.unidad)}</td>
+        <td style="padding:8px; color:#e74c3c;">${escapeHtml(String(p.producto?.margen || "-"))}%</td>
       </tr>`;
     });
     await resend.emails.send({
@@ -1373,7 +1373,7 @@ async function notificarBajoMargen(phone, data, productosBajoMargen) {
       subject: `⚠️ Productos bajo margen - ${data.razonSocial}`,
       html: `<div style="font-family:Arial,sans-serif; max-width:600px; margin:auto; padding:24px; border:2px solid #e74c3c; border-radius:8px;">
         <h2 style="color:#e74c3c;">⚠️ Productos no cotizados por bajo margen</h2>
-        <p><strong>Cliente:</strong> ${data.razonSocial} | RUT: ${data.rut} | WhatsApp: +${phone}</p>
+        <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${escapeHtml(data.rut)} | WhatsApp: +${escapeHtml(phone)}</p>
         <p><strong>Fecha:</strong> ${fecha}</p>
         <table style="width:100%; border-collapse:collapse;">
           <tr style="background:#e74c3c; color:white;">
@@ -1464,9 +1464,9 @@ async function manejarHidroEmail(phone, session, text) {
       to:   emailCliente,
       subject: "Cotización Hidrolavadora - CINTEC",
       html: `<h2>Cotización Hidrolavadora</h2>
-        <p>Estimado/a <strong>${session.data.razonSocial}</strong>,</p>
+        <p>Estimado/a <strong>${escapeHtml(session.data.razonSocial)}</strong>,</p>
         <p>A continuación le presentamos la cotización preparada por nuestro especialista:</p>
-        <div style="background:#f5f5f5;padding:16px;border-radius:8px;white-space:pre-wrap;">${respuesta.replace(/\n/g,"<br>")}</div>
+        <div style="background:#f5f5f5;padding:16px;border-radius:8px;white-space:pre-wrap;">${escapeHtml(respuesta).replace(/\n/g,"<br>")}</div>
         <p>Cualquier consulta, puede responder este correo o contactarnos por WhatsApp.</p>
         <p><em>Equipo CINTEC</em></p>`,
     });
@@ -1491,7 +1491,7 @@ async function enviarSolicitudHidroEmail(phone, data) {
     const formUrl = `${baseUrl}/especialista/form?phone=${phone}&nombre=${encodeURIComponent(data.razonSocial)}&token=${VERIFY_TOKEN}`;
 
     const filas = HIDRO_PREGUNTAS.map(p =>
-      `<tr><td style="padding:6px 12px;font-weight:bold">${p.key}</td><td style="padding:6px 12px">${specs[p.key] || "-"}</td></tr>`
+      `<tr><td style="padding:6px 12px;font-weight:bold">${escapeHtml(p.key)}</td><td style="padding:6px 12px">${escapeHtml(specs[p.key] || "-")}</td></tr>`
     ).join("");
 
     await resend.emails.send({
@@ -1501,7 +1501,7 @@ async function enviarSolicitudHidroEmail(phone, data) {
       html: `
         <h2>🔩 Nueva solicitud de hidrolavadora</h2>
         <p><strong>Fecha:</strong> ${fecha}</p>
-        <p><strong>Cliente:</strong> ${data.razonSocial} | RUT: ${data.rut} | WhatsApp: +${phone}</p>
+        <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${escapeHtml(data.rut)} | WhatsApp: +${escapeHtml(phone)}</p>
         <h3>Especificaciones técnicas</h3>
         <table border="1" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
           <tr><th style="padding:6px 12px">Especificación</th><th style="padding:6px 12px">Respuesta</th></tr>
@@ -1532,8 +1532,8 @@ async function notificarInterno(phone, data) {
       subject: `📋 Solicitud sin cotización - ${data.razonSocial}`,
       html: `<h2>📋 Solicitud sin productos para cotizar</h2>
         <p><strong>Fecha:</strong> ${fecha}</p>
-        <p><strong>Cliente:</strong> ${data.razonSocial} | RUT: ${data.rut} | WhatsApp: +${phone}</p>
-        <p>Productos solicitados: ${data.textoProductos}</p>`,
+        <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${escapeHtml(data.rut)} | WhatsApp: +${escapeHtml(phone)}</p>
+        <p>Productos solicitados: ${escapeHtml(data.textoProductos)}</p>`,
     });
   } catch (err) {
     console.error("Error notificando interno:", err.message);
@@ -1679,7 +1679,7 @@ app.get("/reporte", (req, res) => {
   const filasProductos = topProductos.map((p, i) => `
     <tr style="background:${i % 2 === 0 ? "#fff" : "#f9f9f9"}">
       <td style="padding:8px 12px">${i + 1}</td>
-      <td style="padding:8px 12px">${p.descripcion}</td>
+      <td style="padding:8px 12px">${escapeHtml(p.descripcion)}</td>
       <td style="padding:8px 12px;text-align:center">${p.veces}</td>
       <td style="padding:8px 12px;text-align:center">${p.unidades}</td>
     </tr>`).join("");
@@ -1687,18 +1687,18 @@ app.get("/reporte", (req, res) => {
   const filasRecientes = [...cotizaciones].reverse().slice(0, 20).map(c => `
     <tr>
       <td style="padding:6px 10px;font-size:12px">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago"})}</td>
-      <td style="padding:6px 10px">${c.razonSocial}</td>
+      <td style="padding:6px 10px">${escapeHtml(c.razonSocial)}</td>
       <td style="padding:6px 10px;text-align:center">${c.esClienteNuevo ? "🆕 Nuevo" : "✅ Existente"}</td>
       <td style="padding:6px 10px;text-align:right">$${(c.total || 0).toLocaleString("es-CL")}</td>
-      <td style="padding:6px 10px;font-size:12px">${c.emailCliente}</td>
+      <td style="padding:6px 10px;font-size:12px">${escapeHtml(c.emailCliente)}</td>
     </tr>`).join("");
 
   const filasContactos = [...contactos].reverse().slice(0, 20).map(c => `
     <tr>
       <td style="padding:6px 10px;font-size:12px">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago"})}</td>
-      <td style="padding:6px 10px">${c.nombre}</td>
-      <td style="padding:6px 10px">+${c.phone}</td>
-      <td style="padding:6px 10px">${c.motivo}</td>
+      <td style="padding:6px 10px">${escapeHtml(c.nombre)}</td>
+      <td style="padding:6px 10px">+${escapeHtml(c.phone)}</td>
+      <td style="padding:6px 10px">${escapeHtml(c.motivo)}</td>
     </tr>`).join("");
 
   const diasLabels = Object.keys(porDia).sort().map(d => `"${d}"`).join(",");
