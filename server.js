@@ -5,8 +5,10 @@ const { Resend } = require("resend");
 const { parse } = require("csv-parse/sync");
 const Anthropic = require("@anthropic-ai/sdk");
 const fs = require("fs");
+const crypto = require("crypto");
 
 const app = express();
+app.set("trust proxy", 1); // confiar en Railway reverse proxy para req.ip correcto
 app.use(express.json());
 
 const {
@@ -17,6 +19,12 @@ const {
   RESEND_API_KEY,
   GOOGLE_SHEETS_CSV_URL,
 } = process.env;
+
+// Tokens separados por propósito — fallback a VERIFY_TOKEN si no están configurados
+const REPORT_TOKEN     = process.env.REPORT_TOKEN     || VERIFY_TOKEN;
+const SPECIALIST_TOKEN = process.env.SPECIALIST_TOKEN || VERIFY_TOKEN;
+if (!process.env.REPORT_TOKEN)     console.warn("⚠️  REPORT_TOKEN no configurado, usando VERIFY_TOKEN como fallback. Configura REPORT_TOKEN en Railway.");
+if (!process.env.SPECIALIST_TOKEN) console.warn("⚠️  SPECIALIST_TOKEN no configurado, usando VERIFY_TOKEN como fallback. Configura SPECIALIST_TOKEN en Railway.");
 
 const sessions = {};
 const hidroPendientes = new Map(); // phone → respuesta del especialista (fallback si sesión expiró)
@@ -102,10 +110,30 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// ─── Rate limiter: ventana deslizante por usuario (máx 12 msg/min) ───────────
+// ─── Rate limiter WhatsApp: ventana deslizante por usuario (máx 12 msg/min) ──
 // Cada usuario tiene su propia ventana de 60s que arranca con su primer mensaje.
 // Evita el exploit de ventana fija global (burst justo antes del reset).
 const rateLimiter = new Map(); // phone → { count, windowStart }
+
+// ─── Rate limiter HTTP: ventana deslizante por IP (para /reporte y /especialista) ─
+const httpRateLimiter = new Map(); // ip → { count, windowStart }
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of httpRateLimiter) {
+    if (now - entry.windowStart >= 60_000) httpRateLimiter.delete(ip);
+  }
+}, 60_000);
+
+function checkHttpRateLimit(ip, max = 30) {
+  const now   = Date.now();
+  const entry = httpRateLimiter.get(ip);
+  if (!entry || now - entry.windowStart >= 60_000) {
+    httpRateLimiter.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  entry.count += 1;
+  return entry.count <= max;
+}
 
 setInterval(() => {
   const now = Date.now();
@@ -1488,7 +1516,7 @@ async function enviarSolicitudHidroEmail(phone, data) {
     const specs   = data.hidroSpecs || {};
     const baseUrl = process.env.BASE_URL ||
       (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "https://whatsapp-bot-production.up.railway.app");
-    const formUrl = `${baseUrl}/especialista/form?phone=${phone}&nombre=${encodeURIComponent(data.razonSocial)}&token=${VERIFY_TOKEN}`;
+    const formUrl = `${baseUrl}/especialista/form?phone=${phone}&nombre=${encodeURIComponent(data.razonSocial)}&token=${SPECIALIST_TOKEN}`;
 
     const filas = HIDRO_PREGUNTAS.map(p =>
       `<tr><td style="padding:6px 12px;font-weight:bold">${escapeHtml(p.key)}</td><td style="padding:6px 12px">${escapeHtml(specs[p.key] || "-")}</td></tr>`
@@ -1580,8 +1608,12 @@ function escapeHtml(str) {
 }
 
 app.get("/especialista/form", (req, res) => {
+  if (!checkHttpRateLimit(req.ip, 10)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
   const { phone, nombre, token } = req.query;
-  if (!phone || !token) return res.status(400).send("Parámetros inválidos.");
+  if (!phone || !token || token !== SPECIALIST_TOKEN) return res.status(401).send("No autorizado.");
+  res.setHeader("Content-Security-Policy",
+    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
+  );
   res.send(`<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1616,9 +1648,10 @@ app.get("/especialista/form", (req, res) => {
 });
 
 app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), async (req, res) => {
+  if (!checkHttpRateLimit(req.ip, 10)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
   const { phone, token, respuesta } = req.body;
   if (!phone || !respuesta) return res.status(400).send("Faltan campos.");
-  if (token !== VERIFY_TOKEN) return res.status(401).send("Token inválido.");
+  if (token !== SPECIALIST_TOKEN) return res.status(401).send("Token inválido.");
 
   const session = sessions[phone];
   if (session) {
@@ -1647,7 +1680,8 @@ app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), asy
 
 // ─── Reporte de estadísticas ──────────────────────────────────────────────────
 app.get("/reporte", (req, res) => {
-  if (req.query.token !== VERIFY_TOKEN) return res.status(401).send("No autorizado.");
+  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (req.query.token !== REPORT_TOKEN) return res.status(401).send("No autorizado.");
 
   const cotizaciones = cotizacionesLog.filter(e => e.tipo === "cotizacion");
   const contactos    = cotizacionesLog.filter(e => e.tipo === "contacto");
@@ -1704,6 +1738,10 @@ app.get("/reporte", (req, res) => {
   const diasLabels = Object.keys(porDia).sort().map(d => `"${d}"`).join(",");
   const diasValues = Object.keys(porDia).sort().map(d => porDia[d]).join(",");
 
+  const nonce = crypto.randomBytes(16).toString("base64");
+  res.setHeader("Content-Security-Policy",
+    `default-src 'none'; script-src 'nonce-${nonce}' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data:; connect-src 'none'`
+  );
   res.send(`<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1729,7 +1767,7 @@ app.get("/reporte", (req, res) => {
     tr:hover td { background:#fafafa; }
     canvas { max-height:200px; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div class="header">
@@ -1797,7 +1835,7 @@ app.get("/reporte", (req, res) => {
   </div>
 
   ${Object.keys(porDia).length > 0 ? `
-  <script>
+  <script nonce="${nonce}">
     new Chart(document.getElementById("chart"), {
       type: "bar",
       data: {
