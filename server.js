@@ -102,14 +102,29 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// ─── Rate limiter (máx 12 mensajes/minuto por usuario) ────────────────────────
-const rateLimiter = new Map();
-setInterval(() => rateLimiter.clear(), 60 * 1000);
+// ─── Rate limiter: ventana deslizante por usuario (máx 12 msg/min) ───────────
+// Cada usuario tiene su propia ventana de 60s que arranca con su primer mensaje.
+// Evita el exploit de ventana fija global (burst justo antes del reset).
+const rateLimiter = new Map(); // phone → { count, windowStart }
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [phone, entry] of rateLimiter) {
+    if (now - entry.windowStart >= 60_000) rateLimiter.delete(phone);
+  }
+}, 60_000);
 
 function checkRateLimit(phone) {
-  const count = (rateLimiter.get(phone) || 0) + 1;
-  rateLimiter.set(phone, count);
-  return count <= 12;
+  const now   = Date.now();
+  const entry = rateLimiter.get(phone);
+
+  if (!entry || now - entry.windowStart >= 60_000) {
+    rateLimiter.set(phone, { count: 1, windowStart: now });
+    return true;
+  }
+
+  entry.count += 1;
+  return entry.count <= 12;
 }
 
 // ─── Anti-frustración: handoff automático tras 2 errores consecutivos ─────────
