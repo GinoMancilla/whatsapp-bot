@@ -91,6 +91,21 @@ function registrarContacto(phone, nombre, motivo) {
   guardarLog();
 }
 
+function registrarConversacionProblematica(phone, session, tipo, extra = {}) {
+  cotizacionesLog.push({
+    id:               `PROB-${Date.now()}`,
+    tipo,
+    timestamp:        new Date().toISOString(),
+    phone,
+    step:             session.step,
+    cliente:          session.data.razonSocial || "",
+    rut:              session.data.rut || "",
+    mensajesRecientes: [...(session.data.mensajesRecientes || [])],
+    ...extra,
+  });
+  guardarLog();
+}
+
 // ─── Cache del catálogo CSV (TTL: 10 minutos) ─────────────────────────────────
 let csvCache = { rows: null, ts: 0 };
 const CSV_CACHE_TTL = 10 * 60 * 1000;
@@ -160,6 +175,7 @@ async function registrarError(phone, session) {
   session.data.erroresConsecutivos = (session.data.erroresConsecutivos || 0) + 1;
   if (session.data.erroresConsecutivos >= 2) {
     session.data.erroresConsecutivos = 0;
+    registrarConversacionProblematica(phone, session, "loop");
     await notificarHandoff(phone, session.data);
     await sendMessage(phone,
       `💁 Veo que estás teniendo dificultades. Ya notifiqué a un *ejecutivo de ventas* que te contactará pronto.\n\n` +
@@ -241,6 +257,9 @@ async function responderConsulta(phone, session, pregunta) {
     });
 
     const reply = response.content[0]?.text || "";
+    if (/ejecutivo puede ayudarte|estoy aquí para ayudarte con cotizaciones/i.test(reply)) {
+      registrarConversacionProblematica(phone, session, "sin_respuesta", { pregunta, respuestaClaude: reply });
+    }
     await sendMessage(phone, `${reply}\n\n_Continuemos con tu cotización..._`);
     return true;
   } catch (err) {
@@ -322,6 +341,10 @@ async function handleMessage(phone, text) {
   if (!sessions[phone]) sessions[phone] = { step: STEPS.START, data: {} };
   const session = sessions[phone];
   session.lastActivity = Date.now();
+
+  if (!session.data.mensajesRecientes) session.data.mensajesRecientes = [];
+  session.data.mensajesRecientes.push({ ts: new Date().toISOString(), text });
+  if (session.data.mensajesRecientes.length > 5) session.data.mensajesRecientes.shift();
 
   // ── Comando STOP: cerrar conversación (cumplimiento Meta) ──────────────────
   if (/^(stop|detener|cancelar|salir|para|basta)$/i.test(normalizar(text))) {
@@ -1683,8 +1706,9 @@ app.get("/reporte", (req, res) => {
   if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
   if (req.query.token !== REPORT_TOKEN) return res.status(401).send("No autorizado.");
 
-  const cotizaciones = cotizacionesLog.filter(e => e.tipo === "cotizacion");
-  const contactos    = cotizacionesLog.filter(e => e.tipo === "contacto");
+  const cotizaciones    = cotizacionesLog.filter(e => e.tipo === "cotizacion");
+  const contactos       = cotizacionesLog.filter(e => e.tipo === "contacto");
+  const problematicas   = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
 
   const nuevos     = cotizaciones.filter(c => c.esClienteNuevo).length;
   const existentes = cotizaciones.filter(c => !c.esClienteNuevo).length;
@@ -1830,6 +1854,24 @@ app.get("/reporte", (req, res) => {
       <table>
         <tr><th>Fecha</th><th>Nombre</th><th>WhatsApp</th><th>Motivo</th></tr>
         ${filasContactos}
+      </table>`}
+    </div>
+
+    <div class="section">
+      <h2>⚠️ Conversaciones problemáticas (últimas 20)</h2>
+      <p style="color:#888;font-size:12px;margin-top:-8px">Loop = cliente no entendió 2+ veces seguidas | Sin respuesta = pregunta fuera del alcance del bot</p>
+      ${problematicas.length === 0 ? "<p style='color:#aaa;font-size:13px'>Sin conversaciones problemáticas registradas.</p>" : `
+      <table>
+        <tr><th>Fecha</th><th>Tipo</th><th>Cliente</th><th>Step</th><th>Últimos mensajes del cliente</th><th>Pregunta sin respuesta</th></tr>
+        ${[...problematicas].reverse().slice(0, 20).map(p => `
+        <tr>
+          <td style="padding:6px 10px;font-size:12px">${new Date(p.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago"})}</td>
+          <td style="padding:6px 10px;text-align:center">${p.tipo === "loop" ? "🔄 Loop" : "❓ Sin respuesta"}</td>
+          <td style="padding:6px 10px">${escapeHtml(p.cliente || "–")}</td>
+          <td style="padding:6px 10px;font-size:11px;color:#888">${escapeHtml(p.step || "–")}</td>
+          <td style="padding:6px 10px;font-size:12px;max-width:240px">${(p.mensajesRecientes || []).map(m => escapeHtml(m.text)).join(" → ")}</td>
+          <td style="padding:6px 10px;font-size:12px;max-width:200px;color:#c0392b">${escapeHtml(p.pregunta || "–")}</td>
+        </tr>`).join("")}
       </table>`}
     </div>
   </div>
