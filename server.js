@@ -1585,7 +1585,8 @@ async function enviarSolicitudHidroEmail(phone, data) {
     const specs   = data.hidroSpecs || {};
     const baseUrl = process.env.BASE_URL ||
       (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "https://whatsapp-bot-production.up.railway.app");
-    const formUrl = `${baseUrl}/especialista/form?phone=${phone}&nombre=${encodeURIComponent(data.razonSocial)}&token=${SPECIALIST_TOKEN}`;
+    const specsB64 = Buffer.from(JSON.stringify(specs)).toString("base64url");
+    const formUrl = `${baseUrl}/especialista/form?phone=${phone}&nombre=${encodeURIComponent(data.razonSocial)}&token=${SPECIALIST_TOKEN}&specs=${specsB64}`;
 
     const filas = HIDRO_PREGUNTAS.map(p =>
       `<tr><td style="padding:6px 12px;font-weight:bold">${escapeHtml(p.key)}</td><td style="padding:6px 12px">${escapeHtml(specs[p.key] || "-")}</td></tr>`
@@ -1678,8 +1679,21 @@ function escapeHtml(str) {
 
 app.get("/especialista/form", (req, res) => {
   if (!checkHttpRateLimit(req.ip, 10)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
-  const { phone, nombre, token } = req.query;
+  const { phone, nombre, token, specs: specsB64 } = req.query;
   if (!phone || !token || token !== SPECIALIST_TOKEN) return res.status(401).send("No autorizado.");
+
+  let specs = {};
+  try { if (specsB64) specs = JSON.parse(Buffer.from(specsB64, "base64url").toString()); } catch {}
+
+  const labelSpecs = {
+    agua: "Tipo de agua", corriente: "Corriente eléctrica", bares: "Presión requerida",
+    caudal: "Caudal requerido", modelo: "Modelo de referencia", horas: "Horas de uso/día", uso: "Uso destinado"
+  };
+  const filasSpecs = Object.entries(labelSpecs)
+    .filter(([k]) => specs[k])
+    .map(([k, label]) => `<tr><td class="sl">${escapeHtml(label)}</td><td>${escapeHtml(specs[k])}</td></tr>`)
+    .join("");
+
   res.setHeader("Content-Security-Policy",
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
   );
@@ -1690,37 +1704,126 @@ app.get("/especialista/form", (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cotización Hidrolavadora — CINTEC</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
-    h2   { color: #ed0914; }
-    textarea { width: 100%; height: 200px; padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; }
-    button { background: #ed0914; color: #fff; border: none; padding: 12px 28px; font-size: 16px; border-radius: 6px; cursor: pointer; margin-top: 12px; }
-    button:hover { background: #c00; }
-    .info { background: #f5f5f5; padding: 12px; border-radius: 6px; margin-bottom: 16px; }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;background:#f4f4f4;padding:16px}
+    .card{background:#fff;max-width:600px;margin:0 auto;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+    .hdr{background:#ed0914;color:#fff;padding:16px 20px}
+    .hdr h2{font-size:17px}
+    .hdr p{font-size:12px;opacity:.85;margin-top:3px}
+    .body{padding:18px 20px}
+    .sec{margin-bottom:18px}
+    .sec-title{font-size:10px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#999;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:4px}
+    .info-box{background:#fafafa;border:1px solid #e8e8e8;border-radius:6px;padding:10px 14px;font-size:14px;line-height:1.8}
+    table.specs{width:100%;border-collapse:collapse;font-size:13px}
+    table.specs td{padding:5px 8px;border-bottom:1px solid #f0f0f0}
+    table.specs td.sl{font-weight:bold;color:#555;width:42%}
+    .field{margin-bottom:12px}
+    label{display:block;font-size:13px;font-weight:bold;color:#333;margin-bottom:4px}
+    label .hint{font-weight:normal;color:#aaa;font-size:11px}
+    input[type=text],textarea{width:100%;padding:8px 11px;font-size:14px;border:1px solid #ccc;border-radius:6px;font-family:Arial,sans-serif}
+    input[type=text]:focus,textarea:focus{border-color:#ed0914;outline:none}
+    textarea{height:72px;resize:vertical}
+    .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .btn{width:100%;background:#ed0914;color:#fff;border:none;padding:13px;font-size:15px;font-weight:bold;border-radius:6px;cursor:pointer;margin-top:4px}
+    .btn:hover{background:#c00}
   </style>
 </head>
 <body>
-  <h2>🔩 Responder cotización hidrolavadora</h2>
-  <div class="info">
-    <strong>Cliente:</strong> ${escapeHtml(nombre)}<br>
-    <strong>WhatsApp:</strong> +${escapeHtml(phone)}
+<div class="card">
+  <div class="hdr">
+    <h2>🔩 Cotización Hidrolavadora</h2>
+    <p>Completa los campos y envía la cotización al cliente</p>
   </div>
-  <p>Escribe la cotización del equipo recomendado (modelo, precio, características, condiciones):</p>
-  <form method="POST" action="/especialista/cotizacion">
-    <input type="hidden" name="phone" value="${escapeHtml(phone)}">
-    <input type="hidden" name="token" value="${escapeHtml(token)}">
-    <textarea name="respuesta" placeholder="Ej: Recomendamos KARCHER HD 7/18-4 Classic — Monofásica, 180 bar, 18 lt/min...&#10;Precio neto: $850.000&#10;Condiciones: ..." required></textarea>
-    <br>
-    <button type="submit">📩 Enviar cotización al cliente</button>
-  </form>
+  <div class="body">
+
+    <div class="sec">
+      <div class="sec-title">Datos del cliente</div>
+      <div class="info-box">
+        <strong>Cliente:</strong> ${escapeHtml(nombre)}<br>
+        <strong>WhatsApp:</strong> +${escapeHtml(phone)}
+      </div>
+    </div>
+
+    ${filasSpecs ? `<div class="sec">
+      <div class="sec-title">Especificaciones solicitadas por el cliente</div>
+      <table class="specs">${filasSpecs}</table>
+    </div>` : ""}
+
+    <form method="POST" action="/especialista/cotizacion">
+      <input type="hidden" name="phone" value="${escapeHtml(phone)}">
+      <input type="hidden" name="token" value="${escapeHtml(token)}">
+
+      <div class="sec">
+        <div class="sec-title">Equipo recomendado</div>
+
+        <div class="field">
+          <label>Modelo recomendado <span class="hint">marca y modelo exacto</span></label>
+          <input type="text" name="modelo" placeholder="Ej: Karcher HD 7/18-4 Classic" required>
+        </div>
+
+        <div class="row2">
+          <div class="field">
+            <label>Precio neto <span class="hint">sin IVA</span></label>
+            <input type="text" name="precio_neto" placeholder="Ej: $850.000" required>
+          </div>
+          <div class="field">
+            <label>Precio c/IVA <span class="hint">opcional</span></label>
+            <input type="text" name="precio_iva" placeholder="Ej: $1.011.500">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Características técnicas <span class="hint">presión, caudal, potencia, voltaje, peso</span></label>
+          <input type="text" name="caracteristicas" placeholder="Ej: 180 bar, 18 lt/min, Motor 3HP monofásico 220V">
+        </div>
+
+        <div class="row2">
+          <div class="field">
+            <label>Plazo de entrega</label>
+            <input type="text" name="plazo" placeholder="Ej: 5-7 días hábiles" required>
+          </div>
+          <div class="field">
+            <label>Garantía</label>
+            <input type="text" name="garantia" placeholder="Ej: 12 meses" required>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Condiciones de pago</label>
+          <input type="text" name="condiciones" placeholder="Ej: Transferencia bancaria, 50% anticipo" required>
+        </div>
+
+        <div class="field">
+          <label>Observaciones <span class="hint">accesorios incluidos, stock, notas</span></label>
+          <textarea name="observaciones" placeholder="Ej: Incluye manguera 10 mt, lanza y pistola. Stock disponible."></textarea>
+        </div>
+      </div>
+
+      <button class="btn" type="submit">📩 Enviar cotización al cliente</button>
+    </form>
+  </div>
+</div>
 </body>
 </html>`);
 });
 
 app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), async (req, res) => {
   if (!checkHttpRateLimit(req.ip, 10)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
-  const { phone, token, respuesta } = req.body;
-  if (!phone || !respuesta) return res.status(400).send("Faltan campos.");
+  const { phone, token, modelo, precio_neto, precio_iva, caracteristicas, plazo, garantia, condiciones, observaciones } = req.body;
+  if (!phone || !modelo || !precio_neto) return res.status(400).send("Faltan campos obligatorios.");
   if (token !== SPECIALIST_TOKEN) return res.status(401).send("Token inválido.");
+
+  // Componer mensaje estructurado para el cliente
+  const partes = [
+    `🔩 *Modelo:* ${modelo}`,
+    `💰 *Precio neto:* ${precio_neto}${precio_iva ? `  |  *c/IVA:* ${precio_iva}` : ""}`,
+    caracteristicas && `⚙️ *Características:* ${caracteristicas}`,
+    `📦 *Plazo de entrega:* ${plazo}`,
+    `🛡️ *Garantía:* ${garantia}`,
+    `💳 *Condiciones:* ${condiciones}`,
+    observaciones && `📝 *Observaciones:* ${observaciones}`,
+  ].filter(Boolean).join("\n");
+  const respuesta = partes;
 
   const session = sessions[phone];
   if (session) {
