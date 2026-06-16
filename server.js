@@ -9,7 +9,11 @@ const crypto = require("crypto");
 
 const app = express();
 app.set("trust proxy", 1); // confiar en Railway reverse proxy para req.ip correcto
-app.use(express.json());
+
+// Capturar body raw para verificación de firma Meta (debe ir antes de express.json)
+app.use(express.json({
+  verify: (req, _res, buf) => { req.rawBody = buf; }
+}));
 
 const {
   WHATSAPP_TOKEN,
@@ -20,11 +24,29 @@ const {
   GOOGLE_SHEETS_CSV_URL,
 } = process.env;
 
+const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
+if (!WHATSAPP_APP_SECRET) console.warn("⚠️  WHATSAPP_APP_SECRET no configurado — verificación de firma Meta desactivada. Configúralo en Railway.");
+
 // Tokens separados por propósito — fallback a VERIFY_TOKEN si no están configurados
 const REPORT_TOKEN     = process.env.REPORT_TOKEN     || VERIFY_TOKEN;
 const SPECIALIST_TOKEN = process.env.SPECIALIST_TOKEN || VERIFY_TOKEN;
 if (!process.env.REPORT_TOKEN)     console.warn("⚠️  REPORT_TOKEN no configurado, usando VERIFY_TOKEN como fallback. Configura REPORT_TOKEN en Railway.");
 if (!process.env.SPECIALIST_TOKEN) console.warn("⚠️  SPECIALIST_TOKEN no configurado, usando VERIFY_TOKEN como fallback. Configura SPECIALIST_TOKEN en Railway.");
+
+// ─── Verificación de firma Meta (X-Hub-Signature-256) ─────────────────────────
+function verificarFirmaMeta(req) {
+  if (!WHATSAPP_APP_SECRET) return true; // si no está configurado, se omite (warn en startup)
+  const signature = req.headers["x-hub-signature-256"];
+  if (!signature) return false;
+  const expected = "sha256=" + crypto.createHmac("sha256", WHATSAPP_APP_SECRET)
+    .update(req.rawBody)
+    .digest("hex");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
 
 const sessions = {};
 const hidroPendientes = new Map(); // phone → respuesta del especialista (fallback si sesión expiró)
@@ -323,6 +345,10 @@ app.get("/webhook", (req, res) => {
 
 // ─── Recepción de mensajes ────────────────────────────────────────────────────
 app.post("/webhook", async (req, res) => {
+  if (!verificarFirmaMeta(req)) {
+    console.warn("⚠️  Webhook rechazado: firma Meta inválida desde", req.ip);
+    return res.sendStatus(403);
+  }
   res.sendStatus(200);
   try {
     const msg  = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
