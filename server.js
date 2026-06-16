@@ -114,6 +114,13 @@ const CSV_CACHE_TTL = 10 * 60 * 1000;
 const processedMsgIds = new Set();
 setInterval(() => processedMsgIds.clear(), 5 * 60 * 1000);
 
+// Dedup secundario: mismo texto del mismo teléfono dentro de 5 segundos
+const recentUserMsgs = new Map(); // `${phone}:${text}` → timestamp
+setInterval(() => {
+  const cutoff = Date.now() - 10_000;
+  for (const [k, ts] of recentUserMsgs) if (ts < cutoff) recentUserMsgs.delete(k);
+}, 10_000);
+
 // ─── Limpieza de sesiones abandonadas (TTL: 30 minutos sin actividad) ─────────
 const SESSION_TTL = 30 * 60 * 1000;
 setInterval(() => {
@@ -320,12 +327,17 @@ app.post("/webhook", async (req, res) => {
   try {
     const msg  = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!msg) return;
-    // Ignorar mensajes duplicados que Meta reenvía
+    // Ignorar mensajes duplicados que Meta reenvía (mismo msg.id)
     if (processedMsgIds.has(msg.id)) return;
     processedMsgIds.add(msg.id);
     const from = msg.from;
     const text = msg.text?.body?.trim();
     if (!text) return;
+    // Dedup secundario: mismo texto del mismo teléfono en <5 s (Meta puede enviar distinto msg.id)
+    const dedupKey = `${from}:${text}`;
+    const lastTs   = recentUserMsgs.get(dedupKey);
+    if (lastTs && Date.now() - lastTs < 5_000) return;
+    recentUserMsgs.set(dedupKey, Date.now());
     if (!checkRateLimit(from)) {
       console.warn(`Rate limit alcanzado: ${from}`);
       return;
@@ -635,25 +647,33 @@ async function notificarContactoEjecutivo(phone, nombre, motivo) {
 
 // ─── Procesar productos ───────────────────────────────────────────────────────
 async function procesarProductos(phone, session) {
+  // Inicializar acumuladores antes de cualquier operación
+  if (!session.data.productosConfirmados)   session.data.productosConfirmados   = [];
+  if (!session.data.productosBajoMargen)    session.data.productosBajoMargen    = [];
+  if (!session.data.productosNoEncontrados) session.data.productosNoEncontrados = [];
+
+  const items = parsearProductos(session.data.textoProductos);
+  session.data.itemsPendientes = items;
+
+  // Si el primer producto es hidrolavadora, no necesita catálogo → ir directo
+  const primerItem = items[0];
+  if (primerItem && esHidrolavadora(primerItem.nombre)) {
+    session.data.itemActual = primerItem;
+    await iniciarFlujoHidro(phone, session);
+    return;
+  }
+
   const rows = await cargarCSV();
-  if (!rows) { await sendMessage(phone, `⚠️ Error al acceder al catálogo.`); return; }
+  if (!rows) { await sendMessage(phone, `⚠️ Error al acceder al catálogo. Intenta nuevamente en unos segundos.`); return; }
 
   // Detectar si cliente tiene historial
   const filasCliente = rows.filter(row =>
     (row["CodAuxGSaen"] || "").replace(/[.\-\s]/g, "") === session.data.rutSinDV
   );
   session.data.esClienteNuevo = filasCliente.length === 0;
+  if (session.data.esClienteNuevo) console.log(`Cliente nuevo: ${session.data.rutSinDV}`);
 
-  if (session.data.esClienteNuevo) {
-    console.log(`Cliente nuevo: ${session.data.rutSinDV}`);
-  }
-
-  session.data.rows            = rows;
-  session.data.itemsPendientes = parsearProductos(session.data.textoProductos);
-  // No resetear: el cliente puede agregar productos en múltiples rondas
-  if (!session.data.productosConfirmados)   session.data.productosConfirmados   = [];
-  if (!session.data.productosBajoMargen)    session.data.productosBajoMargen    = [];
-  if (!session.data.productosNoEncontrados) session.data.productosNoEncontrados = [];
+  session.data.rows = rows;
 
   await procesarSiguienteProducto(phone, session);
 }
