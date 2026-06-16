@@ -1914,7 +1914,14 @@ app.get("/reporte", (req, res) => {
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   console.log(`📌 Webhook URL: http://TU-DOMINIO/webhook`);
+  // Pre-calentar caché del catálogo para que el primer cliente no espere
+  try {
+    const rows = await cargarCSV();
+    console.log(`📦 Catálogo pre-cargado: ${rows?.length ?? 0} filas`);
+  } catch (e) {
+    console.warn("⚠️  No se pudo pre-cargar el catálogo:", e.message);
+  }
 });
