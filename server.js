@@ -941,6 +941,28 @@ async function manejarEleccionOpcion(phone, session, text) {
       session.data.productosNoEncontrados.push(item.nombre);
       await sendMessage(phone, `Entendido, omitiremos ese producto.`);
     } else {
+      // El cliente escribió algo libre (ej: "busco el x-75", "quiero el verde")
+      // Intentar interpretarlo como una nueva búsqueda para este mismo slot de producto
+      const consultaLimpia = text.trim()
+        .replace(/^(busco\s+(el\s+|la\s+|los\s+|las\s+)?|quiero\s+(el\s+|la\s+|los\s+|las\s+)?|necesito\s+(el\s+|la\s+|los\s+|las\s+)?|dame\s+(el\s+|la\s+)?)/i, "")
+        .trim();
+      const palabrasUtiles = normalizar(consultaLimpia).split(" ")
+        .filter(w => w.length > 2 && !/^\d+$/.test(w) && !STOP_WORDS_ENVASE.has(w));
+
+      if (palabrasUtiles.length > 0 && session.data.rows) {
+        const nuevoItem = {
+          nombre: consultaLimpia,
+          cantidad: item.cantidad,
+          unidad: item.unidad,
+          cantidadEspecificada: item.cantidadEspecificada,
+        };
+        session.data.itemActual = nuevoItem;
+        session.data.itemsPendientes[0] = nuevoItem;
+        await sendMessage(phone, `🔍 Buscando _"${consultaLimpia}"_ en el catálogo...`);
+        await buscarParaClienteNuevo(phone, session, nuevoItem);
+        return;
+      }
+
       await sendMessage(phone, `⚠️ Responde con un número, *todos* o *no*.`);
       await registrarError(phone, session);
       return;
