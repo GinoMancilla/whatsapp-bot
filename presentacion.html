@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Propuesta — Automatización WhatsApp | CINTEC</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+
+:root{
+  --cintec:      #ed0914;
+  --cintec-mid:  #c40710;
+  --cintec-dark: #8b0008;
+  --cintec-light:#f93d47;
+  --accent:      #ffffff;
+  --success:     #10b981;
+  --danger:      #ef4444;
+  --gray100:     #f8f9fa;
+  --gray200:     #e2e8f0;
+  --gray400:     #94a3b8;
+  --gray600:     #475569;
+  --gray800:     #261c15;
+  --white:       #ffffff;
+}
+
+body{font-family:'Inter',sans-serif;background:var(--gray100);color:var(--gray800);}
+
+/* ═══ SLIDES ════════════════════════════════════════════════ */
+.slide{width:100%;min-height:100vh;display:flex;flex-direction:column;
+  justify-content:center;padding:56px 80px;page-break-after:always;position:relative;}
+
+/* ═══ SLIDE 1 — PORTADA ═════════════════════════════════════ */
+.slide-cover{
+  background:linear-gradient(140deg,#1a0002 0%,#8b0008 40%,#ed0914 100%);
+  color:var(--white);overflow:hidden;
+}
+.cover-circle1{position:absolute;width:500px;height:500px;border-radius:50%;
+  background:rgba(255,255,255,0.04);top:-160px;right:-120px;}
+.cover-circle2{position:absolute;width:300px;height:300px;border-radius:50%;
+  background:rgba(232,196,58,0.08);bottom:-80px;left:-80px;}
+.cover-circle3{position:absolute;width:180px;height:180px;border-radius:50%;
+  border:2px solid rgba(255,255,255,0.15);top:40%;right:15%;}
+
+.logo-block{display:flex;align-items:center;gap:14px;margin-bottom:44px;}
+.logo-img{height:44px;filter:brightness(0) invert(1);}
+.logo-text{font-size:22px;font-weight:800;color:var(--white);letter-spacing:1px;}
+.logo-text span{color:rgba(255,255,255,0.5);}
+
+.cover-badge{display:inline-block;background:rgba(255,255,255,0.15);
+  border:1px solid rgba(255,255,255,0.3);color:var(--white);font-size:10px;
+  font-weight:700;letter-spacing:2.5px;text-transform:uppercase;
+  padding:5px 14px;border-radius:20px;margin-bottom:24px;}
+.cover-title{font-size:50px;font-weight:900;line-height:1.08;margin-bottom:18px;
+  max-width:680px;}
+.cover-title em{color:rgba(255,255,255,0.85);font-style:normal;text-shadow:0 0 40px rgba(255,255,255,0.3);}
+.cover-sub{font-size:16px;color:#a5b4fc;max-width:520px;line-height:1.7;margin-bottom:44px;}
+.cover-chips{display:flex;gap:10px;flex-wrap:wrap;}
+.chip{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);
+  color:#e2e8f0;font-size:12px;padding:7px 16px;border-radius:8px;font-weight:500;}
+.cover-footer{position:absolute;bottom:36px;right:80px;text-align:right;
+  color:#64748b;font-size:12px;}
+.cover-footer strong{color:#94a3b8;}
+
+/* ═══ HEADINGS ══════════════════════════════════════════════ */
+.slide-white{background:var(--white);}
+.slide-gray {background:var(--gray100);}
+.slide-dark {background:linear-gradient(140deg,#0d0b3e 0%,#1b1464 55%,#2d2390 100%);color:var(--white);}
+
+.sec-tag{font-size:10px;font-weight:700;letter-spacing:3px;text-transform:uppercase;
+  color:var(--cintec);margin-bottom:10px;}
+.slide-dark .sec-tag{color:rgba(255,255,255,0.7);}
+.sec-h{font-size:34px;font-weight:800;line-height:1.15;margin-bottom:8px;}
+.sec-p{font-size:14px;color:var(--gray600);max-width:600px;line-height:1.65;margin-bottom:40px;}
+.slide-dark .sec-p{color:#94a3b8;}
+.page-num{position:absolute;bottom:24px;right:40px;font-size:11px;
+  color:var(--gray400);font-weight:500;}
+.slide-dark .page-num{color:#4c5060;}
+
+/* ═══ PHASES GRID ═══════════════════════════════════════════ */
+.phases-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;}
+.pcard{border-radius:16px;padding:28px 24px;border:2px solid transparent;position:relative;overflow:hidden;}
+.pcard.trial   {background:#f0fdf4;border-color:#86efac;}
+.pcard.standard{background:#eff6ff;border-color:#93c5fd;}
+.pcard.scaled  {background:#fefce8;border-color:#fde68a;}
+.pcard.hot::after{content:'RECOMENDADO';position:absolute;top:18px;right:-30px;
+  background:var(--cintec);color:white;font-size:8px;font-weight:700;
+  letter-spacing:1.5px;padding:5px 40px;transform:rotate(45deg);}
+
+.ptag{display:inline-block;font-size:9px;font-weight:700;letter-spacing:2px;
+  text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:14px;}
+.trial .ptag   {background:#dcfce7;color:#15803d;}
+.standard .ptag{background:#dbeafe;color:#1d4ed8;}
+.scaled .ptag  {background:#fef9c3;color:#92400e;}
+
+.pname{font-size:18px;font-weight:700;color:var(--gray800);margin-bottom:2px;}
+.pperiod{font-size:11px;color:var(--gray400);margin-bottom:20px;}
+.plabel{font-size:10px;color:var(--gray400);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;}
+.psetup{font-size:20px;font-weight:700;color:var(--gray800);margin-bottom:2px;}
+.pprice{font-size:30px;font-weight:800;color:var(--gray800);margin-bottom:2px;}
+.pprice span{font-size:12px;font-weight:500;color:var(--gray400);}
+.pdiv{height:1px;background:rgba(0,0,0,0.07);margin:16px 0;}
+.pincludes{font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;
+  color:var(--gray400);margin-bottom:10px;}
+.flist{list-style:none;}
+.flist li{font-size:12px;color:var(--gray600);padding:4px 0;display:flex;
+  align-items:flex-start;gap:7px;line-height:1.4;}
+.flist li::before{content:'✓';font-weight:800;font-size:11px;flex-shrink:0;margin-top:1px;}
+.trial .flist li::before   {color:#16a34a;}
+.standard .flist li::before{color:#2563eb;}
+.scaled .flist li::before  {color:#d97706;}
+
+/* ═══ TABLA ══════════════════════════════════════════════════ */
+.ctable{width:100%;border-collapse:collapse;border-radius:12px;overflow:hidden;
+  box-shadow:0 1px 4px rgba(0,0,0,0.08);}
+.ctable thead tr{background:var(--cintec);color:white;}
+.ctable th{padding:11px 18px;text-align:left;font-size:11px;font-weight:600;
+  letter-spacing:1px;text-transform:uppercase;}
+.ctable th:not(:first-child){text-align:center;}
+.ctable tbody tr{border-bottom:1px solid var(--gray200);background:white;}
+.ctable tbody tr:nth-child(even){background:#f8fafc;}
+.ctable td{padding:10px 18px;font-size:13px;color:var(--gray800);}
+.ctable td:not(:first-child){text-align:center;}
+.ctable .total-row{background:var(--cintec) !important;}
+.ctable .total-row td{color:white;font-weight:700;font-size:14px;padding:13px 18px;}
+.tg{display:inline-block;font-size:10px;font-weight:600;padding:3px 9px;border-radius:20px;}
+.tg-yes{background:#dcfce7;color:#15803d;}
+.tg-up {background:#dbeafe;color:#1d4ed8;}
+.tg-opt{background:#fef9c3;color:#92400e;}
+
+/* ═══ TIMELINE ══════════════════════════════════════════════ */
+.timeline{display:flex;align-items:flex-start;margin-top:10px;}
+.tl-item{flex:1;text-align:center;position:relative;}
+.tl-item:not(:last-child)::after{content:'';position:absolute;top:20px;left:50%;
+  width:100%;height:2px;background:var(--gray200);}
+.tl-dot{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-weight:700;font-size:13px;margin:0 auto 10px;position:relative;z-index:1;}
+.dot-t{background:#dcfce7;color:#15803d;border:2px solid #86efac;}
+.dot-s{background:#dbeafe;color:#1d4ed8;border:2px solid #93c5fd;}
+.dot-e{background:#fef9c3;color:#92400e;border:2px solid #fde68a;}
+.tl-label{font-size:12px;font-weight:600;color:var(--gray800);margin-bottom:3px;}
+.tl-sub{font-size:10px;color:var(--gray400);}
+
+/* ═══ ROI ════════════════════════════════════════════════════ */
+.roi-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:start;}
+.roi-box{background:white;border-radius:16px;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.07);}
+.roi-title{font-size:15px;font-weight:700;margin-bottom:20px;padding-bottom:12px;
+  border-bottom:2px solid var(--gray200);}
+.roi-row{display:flex;justify-content:space-between;align-items:center;
+  padding:9px 0;border-bottom:1px dashed var(--gray200);}
+.roi-row:last-child{border:none;}
+.roi-rl{font-size:12px;color:var(--gray600);}
+.roi-rv{font-size:14px;font-weight:700;}
+.roi-total{display:flex;justify-content:space-between;align-items:center;
+  background:var(--cintec);color:white;padding:14px 18px;border-radius:10px;margin-top:14px;}
+.roi-tl{font-size:12px;font-weight:600;}
+.roi-tv{font-size:20px;font-weight:800;}
+.vcard{background:white;border-radius:16px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.07);}
+.vcard-title{font-size:14px;font-weight:700;margin-bottom:16px;}
+.vi{display:flex;align-items:flex-start;gap:14px;padding:13px 0;
+  border-bottom:1px solid var(--gray100);}
+.vi:last-child{border:none;}
+.vi-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;
+  justify-content:center;font-size:17px;flex-shrink:0;}
+.vi-icon.b{background:#dbeafe;} .vi-icon.g{background:#dcfce7;}
+.vi-icon.y{background:#fef9c3;} .vi-icon.p{background:#f3e8ff;}
+.vi-t{font-size:12px;font-weight:600;color:var(--gray800);margin-bottom:2px;}
+.vi-d{font-size:11px;color:var(--gray400);line-height:1.4;}
+
+/* ═══ WHATSAPP MOCKUP ════════════════════════════════════════ */
+.wa-demo{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;}
+.wa-phone{background:#111b21;border-radius:16px;overflow:hidden;
+  box-shadow:0 6px 24px rgba(0,0,0,0.35);max-width:280px;margin:0 auto;}
+.wa-header{background:#1f2c34;padding:8px 12px;display:flex;align-items:center;gap:8px;}
+.wa-avatar{width:30px;height:30px;border-radius:50%;background:#ed0914;
+  display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:700;}
+.wa-hinfo{flex:1;}
+.wa-hname{font-size:12px;font-weight:600;color:white;}
+.wa-hsub{font-size:9px;color:#8696a0;}
+.wa-body{background:#0b141a;padding:8px;min-height:0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Ctext x='5' y='30' font-size='24' opacity='0.03' fill='white'%3E💬%3C/text%3E%3C/svg%3E");}
+.wa-msg{max-width:82%;margin-bottom:3px;padding:5px 8px;border-radius:7px;
+  font-size:10px;line-height:1.45;position:relative;}
+.wa-msg.bot{background:#1f2c34;color:#e9edef;border-radius:7px 7px 7px 0;margin-right:auto;}
+.wa-msg.user{background:#005c4b;color:#e9edef;border-radius:7px 7px 0 7px;margin-left:auto;}
+.wa-msg .wa-time{font-size:8px;color:#8696a0;text-align:right;margin-top:2px;}
+.wa-msg strong{color:var(--accent);}
+.wa-gap{height:3px;}
+.wa-footer{background:#1f2c34;padding:7px 10px;display:flex;align-items:center;gap:7px;}
+.wa-input{flex:1;background:#2a3942;border-radius:20px;padding:6px 12px;
+  font-size:10px;color:#8696a0;}
+.wa-send{width:30px;height:30px;border-radius:50%;background:#00a884;
+  display:flex;align-items:center;justify-content:center;color:white;font-size:12px;}
+
+.wa-features{display:flex;flex-direction:column;gap:14px;justify-content:center;}
+.wf-card{background:white;border-radius:12px;padding:18px 20px;
+  box-shadow:0 1px 4px rgba(0,0,0,0.07);display:flex;align-items:flex-start;gap:14px;}
+.wf-icon{width:42px;height:42px;border-radius:10px;background:#ed0914;
+  display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
+.wf-title{font-size:13px;font-weight:700;color:var(--gray800);margin-bottom:3px;}
+.wf-desc{font-size:11px;color:var(--gray400);line-height:1.4;}
+
+/* ═══ CTA ════════════════════════════════════════════════════ */
+.slide-cta{
+  background:linear-gradient(140deg,#1a0002 0%,#8b0008 45%,#ed0914 100%);
+  color:white;align-items:center;text-align:center;
+}
+.cta-h{font-size:42px;font-weight:900;line-height:1.15;margin-bottom:14px;max-width:680px;}
+.cta-h em{color:rgba(255,255,255,0.85);font-style:normal;text-shadow:0 0 40px rgba(255,255,255,0.3);}
+.cta-p{font-size:15px;color:#94a3b8;margin-bottom:36px;max-width:480px;}
+.cta-steps{display:flex;gap:20px;margin-bottom:40px;justify-content:center;}
+.cta-step{background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);
+  border-radius:12px;padding:18px 24px;min-width:155px;}
+.cta-n{font-size:26px;font-weight:800;color:var(--accent);margin-bottom:5px;}
+.cta-l{font-size:12px;color:#94a3b8;}
+.cta-note{font-size:12px;color:#475569;}
+
+/* Demo slide más compacto */
+.slide-demo{padding:32px 80px;}
+.slide-demo .sec-p{margin-bottom:16px;}
+.slide-demo .wa-sub{font-size:10px;font-weight:700;letter-spacing:2px;
+  text-transform:uppercase;color:var(--cintec);margin-bottom:8px;}
+
+/* ROI slide compacto */
+.slide-roi{padding:32px 80px;}
+.slide-roi .sec-p{margin-bottom:20px;}
+.slide-roi .roi-box{padding:18px 22px;}
+.slide-roi .roi-title{font-size:13px;margin-bottom:12px;padding-bottom:10px;}
+.slide-roi .roi-row{padding:7px 0;}
+.slide-roi .roi-total{padding:11px 16px;margin-top:10px;}
+.slide-roi .vcard{padding:18px 22px;}
+.slide-roi .vcard-title{font-size:13px;margin-bottom:10px;}
+.slide-roi .vi{padding:8px 0;}
+.slide-roi .vi-icon{width:32px;height:32px;font-size:14px;}
+
+/* Evitar página en blanco al final */
+.slide:last-child{page-break-after:avoid;}
+
+/* ═══ PRINT ══════════════════════════════════════════════════ */
+@media print{
+  .slide{page-break-after:always;min-height:100vh;}
+  body{background:white;}
+}
+</style>
+</head>
+<body>
+
+<!-- ══ SLIDE 1 — PORTADA ═════════════════════════════════════════════════════ -->
+<div class="slide slide-cover">
+  <div class="cover-circle1"></div>
+  <div class="cover-circle2"></div>
+  <div class="cover-circle3"></div>
+
+  <div class="logo-block">
+    <img class="logo-img" src="https://assets.jumpseller.com/store/cintecsa/themes/954643/settings/e6f636bc6ca9fb2e0341/logo%20cintec%20color_.png?1771944795" alt="CINTEC"/>
+  </div>
+
+  <div class="cover-badge">Propuesta Comercial Confidencial</div>
+  <h1 class="cover-title">
+    Bot de Cotizaciones<br/>Automáticas vía<br/><em>WhatsApp</em>
+  </h1>
+  <p class="cover-sub">
+    Sistema inteligente que recibe solicitudes de clientes, consulta el catálogo
+    de productos y envía cotizaciones por email — disponible 24/7, sin intervención humana.
+  </p>
+  <div class="cover-chips">
+    <span class="chip">🤖 Respuesta inmediata</span>
+    <span class="chip">📧 Cotización automática por email</span>
+    <span class="chip">📊 Reportes KPI mensuales</span>
+    <span class="chip">📈 3 fases de crecimiento</span>
+  </div>
+  <div class="cover-footer">
+    <strong>Mayo 2026</strong><br/>
+    Propuesta de Automatización Comercial
+  </div>
+</div>
+
+
+<!-- ══ SLIDE 2 — DEMO DEL BOT ════════════════════════════════════════════════ -->
+<div class="slide slide-gray slide-demo">
+  <div class="sec-tag">El sistema en acción</div>
+  <h2 class="sec-h">Así funciona el bot para tus clientes</h2>
+  <p class="sec-p">
+    El cliente solo necesita escribir por WhatsApp. El bot guía la conversación,
+    busca los productos en el catálogo y envía la cotización al correo en segundos.
+  </p>
+
+  <div class="wa-demo">
+
+    <!-- TELÉFONO IZQUIERDO: inicio del flujo -->
+    <div>
+      <div class="wa-sub">① Inicio — Identificación del cliente</div>
+      <div class="wa-phone">
+        <div class="wa-header">
+          <div class="wa-avatar">CI</div>
+          <div class="wa-hinfo">
+            <div class="wa-hname">CINTEC Ventas</div>
+            <div class="wa-hsub">🟢 en línea</div>
+          </div>
+          <div style="color:#8696a0;font-size:18px;">⋮</div>
+        </div>
+        <div class="wa-body">
+          <div class="wa-msg bot">
+            👋 ¡Hola! Bienvenido/a a <strong>CINTEC</strong>.<br/><br/>
+            Para cotizarte necesito algunos datos.<br/><br/>
+            📋 ¿Cuál es tu <strong>RUT</strong>?<br/>
+            <em style="font-size:10px;color:#8696a0;">Ejemplo: 12.345.678-9</em>
+            <div class="wa-time">09:22 ✓✓</div>
+          </div>
+          <div class="wa-gap"></div>
+          <div class="wa-msg user">
+            12.345.678-9
+            <div class="wa-time">09:22 ✓✓</div>
+          </div>
+          <div class="wa-gap"></div>
+          <div class="wa-msg bot">
+            ✅ RUT registrado.<br/><br/>
+            🏢 ¿Cuál es la <strong>Razón Social</strong> de tu empresa?
+            <div class="wa-time">09:22 ✓✓</div>
+          </div>
+          <div class="wa-gap"></div>
+          <div class="wa-msg user">
+            Distribuidora El Sur Ltda.
+            <div class="wa-time">09:23 ✓✓</div>
+          </div>
+          <div class="wa-gap"></div>
+          <div class="wa-msg bot">
+            ✅ Empresa registrada.<br/><br/>
+            📦 ¿Qué productos necesitas cotizar?<br/>
+            <em style="font-size:10px;color:#8696a0;">"lavaloza 10 un, detergente 5 kg"</em>
+            <div class="wa-time">09:23 ✓✓</div>
+          </div>
+        </div>
+        <div class="wa-footer">
+          <div class="wa-input">Escribe un mensaje...</div>
+          <div class="wa-send">➤</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TELÉFONO DERECHO: cotización -->
+    <div>
+      <div class="wa-sub">② Resultado — Cotización y envío</div>
+      <div class="wa-phone">
+        <div class="wa-header">
+          <div class="wa-avatar">CI</div>
+          <div class="wa-hinfo">
+            <div class="wa-hname">CINTEC Ventas</div>
+            <div class="wa-hsub">🟢 en línea</div>
+          </div>
+          <div style="color:#8696a0;font-size:18px;">⋮</div>
+        </div>
+        <div class="wa-body">
+          <div class="wa-msg user">
+            lavaloza 10 unidades, detergente 5 kg
+            <div class="wa-time">09:24 ✓✓</div>
+          </div>
+          <div class="wa-gap"></div>
+          <div class="wa-msg bot">
+            🔍 Buscando en nuestro catálogo...
+            <div class="wa-time">09:24 ✓✓</div>
+          </div>
+          <div class="wa-gap"></div>
+          <div class="wa-msg bot">
+            ✅ <strong>Productos disponibles:</strong><br/><br/>
+            <strong>1. LAVALOZA LÍQUIDO 5L</strong><br/>
+            🏷️ Cód: 001234 | 💰 $4.850<br/>
+            📦 10 un | 💵 Subtotal: $48.500<br/><br/>
+            <strong>2. DETERGENTE INDUSTRIAL 5KG</strong><br/>
+            🏷️ Cód: 002891 | 💰 $12.300<br/>
+            📦 5 kg | 💵 Subtotal: $61.500<br/><br/>
+            <strong>💵 TOTAL: $110.000</strong>
+            <div class="wa-time">09:24 ✓✓</div>
+          </div>
+          <div class="wa-gap"></div>
+          <div class="wa-msg bot">
+            📧 ¿A qué <strong>correo</strong> enviamos la cotización?
+            <div class="wa-time">09:24 ✓✓</div>
+          </div>
+          <div class="wa-gap"></div>
+          <div class="wa-msg user">
+            compras@distribuidorasur.cl
+            <div class="wa-time">09:25 ✓✓</div>
+          </div>
+          <div class="wa-gap"></div>
+          <div class="wa-msg bot">
+            ✅ ¡Listo! Cotización enviada a<br/>
+            <strong>compras@distribuidorasur.cl</strong><br/><br/>
+            ¡Gracias por preferirnos! 🙏
+            <div class="wa-time">09:25 ✓✓</div>
+          </div>
+        </div>
+        <div class="wa-footer">
+          <div class="wa-input">Escribe un mensaje...</div>
+          <div class="wa-send">➤</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <div class="page-num">2 / 5</div>
+</div>
+
+
+<!-- ══ SLIDE 3 — FASES ══════════════════════════════════════════════════════ -->
+<div class="slide slide-white">
+  <div class="sec-tag">Plan de implementación</div>
+  <h2 class="sec-h">Tres fases de crecimiento</h2>
+  <p class="sec-p">
+    Iniciamos con un período de prueba de bajo costo para validar el sistema con
+    clientes reales, escalando según los resultados obtenidos.
+  </p>
+
+  <div class="phases-grid">
+
+    <div class="pcard trial">
+      <span class="ptag">Fase 1</span>
+      <div class="pname">Período de Prueba</div>
+      <div class="pperiod">Meses 1 – 2</div>
+      <div class="plabel">Implementación inicial</div>
+      <div class="psetup">$265.000 CLP</div>
+      <div class="plabel" style="margin-top:10px;">Mantención mensual</div>
+      <div class="pprice">$134.000 <span>CLP/mes</span></div>
+      <div class="pdiv"></div>
+      <div class="pincludes">Incluye</div>
+      <ul class="flist">
+        <li>Bot WhatsApp activo 24/7</li>
+        <li>Cotizaciones automáticas por email</li>
+        <li>Catálogo de productos (Google Sheets)</li>
+        <li>Validación RUT cliente</li>
+        <li>Alerta por productos bajo margen</li>
+        <li>🤖 IA conversacional (Claude AI)</li>
+        <li>Soporte por email</li>
+      </ul>
+    </div>
+
+    <div class="pcard standard hot">
+      <span class="ptag">Fase 2</span>
+      <div class="pname">Producción Estándar</div>
+      <div class="pperiod">Mes 3 en adelante</div>
+      <div class="plabel">Sin costo adicional de setup</div>
+      <div class="psetup" style="color:#94a3b8;">—</div>
+      <div class="plabel" style="margin-top:10px;">Mantención mensual</div>
+      <div class="pprice">$208.000 <span>CLP/mes</span></div>
+      <div class="pdiv"></div>
+      <div class="pincludes">Todo de Fase 1, más</div>
+      <ul class="flist">
+        <li>Base de datos persistente</li>
+        <li>Historial completo de cotizaciones</li>
+        <li>Reporte KPI mensual en Excel</li>
+        <li>Envío automático del reporte al equipo</li>
+        <li>Panel de métricas y rendimiento</li>
+        <li>Soporte prioritario</li>
+      </ul>
+    </div>
+
+    <div class="pcard scaled">
+      <span class="ptag">Fase 3 — Opcional</span>
+      <div class="pname">Producción Escalada</div>
+      <div class="pperiod">Según demanda detectada</div>
+      <div class="plabel">Sin costo adicional de setup</div>
+      <div class="psetup" style="color:#94a3b8;">—</div>
+      <div class="plabel" style="margin-top:10px;">Mantención mensual</div>
+      <div class="pprice">$313.000 <span>CLP/mes</span></div>
+      <div class="pdiv"></div>
+      <div class="pincludes">Todo de Fase 2, más</div>
+      <ul class="flist">
+        <li>Automatización avanzada de flujos</li>
+        <li>Integración con Power BI / ERP</li>
+        <li>Múltiples canales de cotización</li>
+        <li>Reportes personalizados por área</li>
+        <li>Análisis predictivo de demanda</li>
+        <li>SLA de soporte garantizado</li>
+      </ul>
+    </div>
+
+  </div>
+  <div class="page-num">3 / 5</div>
+</div>
+
+
+<!-- ══ SLIDE 4 — TABLA DE COSTOS ════════════════════════════════════════════ -->
+<div class="slide slide-gray">
+  <div class="sec-tag">Resumen financiero</div>
+  <h2 class="sec-h">Inversión por fase</h2>
+  <p class="sec-p">
+    La Fase 3 se activa únicamente si los reportes de las fases anteriores
+    evidencian un volumen que justifique la inversión adicional.
+  </p>
+
+  <table class="ctable">
+    <thead>
+      <tr>
+        <th>Concepto</th>
+        <th>Fase 1 — Prueba</th>
+        <th>Fase 2 — Estándar</th>
+        <th>Fase 3 — Escalada</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Implementación inicial</td>
+        <td><strong>$265.000 CLP</strong> (único)</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>Mantención mensual</td>
+        <td><strong>$134.000 CLP</strong></td>
+        <td><strong>$208.000 CLP</strong></td>
+        <td><strong>$313.000 CLP</strong></td>
+      </tr>
+      <tr>
+        <td>Bot WhatsApp 24/7</td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+      </tr>
+      <tr>
+        <td>Cotizaciones automáticas</td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+      </tr>
+      <tr>
+        <td>🤖 IA conversacional (Claude AI)</td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+      </tr>
+      <tr>
+        <td>Base de datos + historial</td>
+        <td>—</td>
+        <td><span class="tg tg-up">Fase 2</span></td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+      </tr>
+      <tr>
+        <td>Reporte KPI en Excel</td>
+        <td>—</td>
+        <td><span class="tg tg-up">Fase 2</span></td>
+        <td><span class="tg tg-yes">Incluido</span></td>
+      </tr>
+      <tr>
+        <td>Integración Power BI / ERP</td>
+        <td>—</td>
+        <td>—</td>
+        <td><span class="tg tg-opt">Fase 3</span></td>
+      </tr>
+      <tr>
+        <td>Automatización avanzada</td>
+        <td>—</td>
+        <td>—</td>
+        <td><span class="tg tg-opt">Fase 3</span></td>
+      </tr>
+      <tr class="total-row">
+        <td>💰 Inversión mensual</td>
+        <td>$134.000 CLP/mes</td>
+        <td>$208.000 CLP/mes</td>
+        <td>$313.000 CLP/mes</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-num">4 / 5</div>
+</div>
+
+
+<!-- ══ SLIDE 5 — ROI ════════════════════════════════════════════════════════ -->
+<div class="slide slide-white slide-roi">
+  <div class="sec-tag">Retorno de inversión</div>
+  <h2 class="sec-h">El costo de no automatizar</h2>
+  <p class="sec-p">
+    Con más de $1.000M CLP en ventas mensuales, cada hora sin respuesta es una oportunidad que puede irse con la competencia.
+  </p>
+
+  <div class="roi-grid">
+    <div class="roi-box">
+      <div class="roi-title">📊 Impacto mensual estimado</div>
+      <div class="roi-row">
+        <span class="roi-rl">Facturación mensual</span>
+        <span class="roi-rv" style="color:var(--gray800);">+$1.000M CLP</span>
+      </div>
+      <div class="roi-row">
+        <span class="roi-rl">Ventas perdidas por demora en cotización (1%)</span>
+        <span class="roi-rv" style="color:var(--danger);">−$10M CLP/mes</span>
+      </div>
+      <div class="roi-row">
+        <span class="roi-rl">Nuevos pedidos por disponibilidad 24/7 (0,5%)</span>
+        <span class="roi-rv" style="color:var(--success);">+$5M CLP/mes</span>
+      </div>
+      <div class="roi-row">
+        <span class="roi-rl">Costo del servicio (Fase 2)</span>
+        <span class="roi-rv">$208.000 CLP/mes</span>
+      </div>
+      <div class="roi-total">
+        <span class="roi-tl">✅ Valor recuperable mensual</span>
+        <span class="roi-tv">~$15M CLP</span>
+      </div>
+      <div style="font-size:11px;color:var(--gray400);margin-top:10px;line-height:1.6;">
+        El bot cuesta <strong>menos del 0,02%</strong> de la facturación mensual.<br/>
+        ROI estimado: <strong>90x</strong> — se paga en el primer día de operación.
+      </div>
+    </div>
+
+    <div class="vcard">
+      <div class="vcard-title">🚀 Por qué importa la velocidad</div>
+      <div class="vi">
+        <div class="vi-icon b">🕐</div>
+        <div>
+          <div class="vi-t">Cotización en &lt;30 segundos, 24/7</div>
+          <div class="vi-d">El cliente que escribe a las 8 PM recibe respuesta inmediata — no espera al día siguiente ni cotiza con otro proveedor</div>
+        </div>
+      </div>
+      <div class="vi">
+        <div class="vi-icon g">📈</div>
+        <div>
+          <div class="vi-t">Datos de demanda en tiempo real</div>
+          <div class="vi-d">Qué productos se cotizán más, qué clientes están activos y cuánto monto se genera por canal</div>
+        </div>
+      </div>
+      <div class="vi">
+        <div class="vi-icon y">⚡</div>
+        <div>
+          <div class="vi-t">Vendedores enfocados en cerrar</div>
+          <div class="vi-d">Liberados de cotizaciones rutinarias, dedican su tiempo a negociaciones y cuentas clave de alto valor</div>
+        </div>
+      </div>
+      <div class="vi">
+        <div class="vi-icon p">🔒</div>
+        <div>
+          <div class="vi-t">Precios siempre exactos</div>
+          <div class="vi-d">El bot consulta el catálogo oficial en cada cotización — cero errores manuales ni precios desactualizados</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Próximos pasos al pie del ROI -->
+  <div style="margin-top:16px;background:linear-gradient(135deg,#8b0008,#ed0914);
+    border-radius:14px;padding:14px 24px;display:flex;align-items:center;
+    justify-content:space-between;gap:20px;">
+    <div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+        color:rgba(255,255,255,0.7);margin-bottom:6px;">Próximos pasos</div>
+      <div style="color:white;font-size:14px;font-weight:700;">
+        Operativo en menos de una semana
+      </div>
+      <div style="color:rgba(255,255,255,0.65);font-size:11px;margin-top:3px;">
+        Período de prueba 2 meses · Sin permanencia · Escalable según resultados
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;flex-shrink:0;">
+      <div style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);
+        border-radius:10px;padding:10px 14px;text-align:center;min-width:100px;">
+        <div style="font-size:20px;font-weight:800;color:white;">01</div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.7);">Reunión de<br/>configuración</div>
+      </div>
+      <div style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);
+        border-radius:10px;padding:10px 14px;text-align:center;min-width:100px;">
+        <div style="font-size:20px;font-weight:800;color:white;">02</div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.7);">Integrar catálogo<br/>de productos</div>
+      </div>
+      <div style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);
+        border-radius:10px;padding:10px 14px;text-align:center;min-width:100px;">
+        <div style="font-size:20px;font-weight:800;color:white;">03</div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.7);">Bot activo en<br/>WhatsApp</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-num">5 / 5</div>
+</div>
+
+</body>
+</html>

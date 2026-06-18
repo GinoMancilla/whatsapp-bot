@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Propuesta Comercial — Bot WhatsApp CINTEC | Pesos Chilenos</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+
+:root{
+  --cintec:      #ed0914;
+  --cintec-mid:  #c40710;
+  --cintec-dark: #8b0008;
+  --cintec-light:#f93d47;
+  --success:     #10b981;
+  --gray100:     #f8f9fa;
+  --gray200:     #e2e8f0;
+  --gray400:     #94a3b8;
+  --gray600:     #475569;
+  --gray800:     #1e293b;
+  --white:       #ffffff;
+}
+
+body{font-family:'Inter',sans-serif;background:#f1f5f9;color:var(--gray800);}
+
+.slide{width:100%;min-height:100vh;display:flex;flex-direction:column;
+  justify-content:center;padding:56px 80px;page-break-after:always;position:relative;}
+
+/* PORTADA */
+.slide-cover{
+  background:linear-gradient(140deg,#1a0002 0%,#8b0008 40%,#ed0914 100%);
+  color:var(--white);overflow:hidden;
+}
+.cover-circle1{position:absolute;width:520px;height:520px;border-radius:50%;
+  background:rgba(255,255,255,0.04);top:-160px;right:-120px;}
+.cover-circle2{position:absolute;width:320px;height:320px;border-radius:50%;
+  background:rgba(255,255,255,0.03);bottom:-80px;left:-80px;}
+.cover-circle3{position:absolute;width:200px;height:200px;border-radius:50%;
+  border:2px solid rgba(255,255,255,0.12);top:38%;right:14%;}
+
+.logo-block{display:flex;align-items:center;gap:12px;margin-bottom:48px;}
+.logo-mark{width:44px;height:44px;background:var(--white);border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;font-weight:900;color:var(--cintec);}
+.logo-text{font-size:22px;font-weight:800;color:var(--white);letter-spacing:1px;}
+
+.cover-badge{display:inline-block;background:rgba(255,255,255,0.13);
+  border:1px solid rgba(255,255,255,0.28);color:var(--white);font-size:10px;
+  font-weight:700;letter-spacing:2.5px;text-transform:uppercase;
+  padding:5px 14px;border-radius:20px;margin-bottom:22px;}
+.cover-title{font-size:52px;font-weight:900;line-height:1.07;margin-bottom:18px;max-width:700px;}
+.cover-title em{color:rgba(255,255,255,0.8);font-style:normal;}
+.cover-sub{font-size:16px;color:rgba(255,255,255,0.65);max-width:540px;line-height:1.7;margin-bottom:44px;}
+
+.cover-chips{display:flex;gap:10px;flex-wrap:wrap;}
+.chip{background:rgba(255,255,255,0.09);border:1px solid rgba(255,255,255,0.18);
+  color:#e2e8f0;font-size:12px;padding:7px 16px;border-radius:8px;font-weight:500;}
+
+.cover-footer{position:absolute;bottom:36px;right:80px;text-align:right;color:#64748b;font-size:12px;}
+.cover-footer strong{color:#94a3b8;}
+
+/* LAYOUT GENERAL */
+.slide-white{background:var(--white);}
+.slide-gray {background:var(--gray100);}
+.slide-dark {background:linear-gradient(140deg,#0d0b3e 0%,#1b1464 55%,#2d2390 100%);color:var(--white);}
+
+.sec-tag{font-size:10px;font-weight:700;letter-spacing:3px;text-transform:uppercase;
+  color:var(--cintec);margin-bottom:10px;}
+.slide-dark .sec-tag{color:rgba(255,255,255,0.65);}
+.sec-h{font-size:34px;font-weight:800;line-height:1.15;margin-bottom:8px;}
+.sec-p{font-size:14px;color:var(--gray600);max-width:640px;line-height:1.65;margin-bottom:36px;}
+.slide-dark .sec-p{color:#94a3b8;}
+.page-num{position:absolute;bottom:24px;right:40px;font-size:11px;color:var(--gray400);font-weight:500;}
+.slide-dark .page-num{color:#4c5060;}
+
+/* FEATURE GRID */
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;}
+.fcard{background:white;border-radius:14px;padding:22px 20px;
+  border:1px solid var(--gray200);box-shadow:0 1px 3px rgba(0,0,0,0.05);}
+.fcard-icon{font-size:26px;margin-bottom:10px;}
+.fcard-title{font-size:13px;font-weight:700;color:var(--gray800);margin-bottom:6px;}
+.fcard-desc{font-size:11px;color:var(--gray600);line-height:1.55;}
+
+/* PRICING CARDS */
+.price-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:8px;}
+.pcard{border-radius:18px;padding:32px 28px;position:relative;overflow:hidden;}
+.pcard-std{background:#f8faff;border:2px solid #bfdbfe;}
+.pcard-pro{background:linear-gradient(140deg,#7f1d1d,#b91c1c,#ed0914);color:white;}
+.pcard-pro::after{content:'RECOMENDADO';position:absolute;top:22px;right:-28px;
+  background:rgba(255,255,255,0.25);color:white;font-size:8px;font-weight:700;
+  letter-spacing:1.5px;padding:5px 40px;transform:rotate(45deg);}
+
+.ptag{display:inline-block;font-size:9px;font-weight:700;letter-spacing:2px;
+  text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:16px;}
+.ptag-std{background:#dbeafe;color:#1d4ed8;}
+.ptag-pro{background:rgba(255,255,255,0.2);color:white;}
+
+.pname{font-size:20px;font-weight:800;margin-bottom:2px;}
+.pcard-std .pname{color:var(--gray800);}
+.pdesc{font-size:12px;margin-bottom:24px;}
+.pcard-std .pdesc{color:var(--gray600);}
+.pcard-pro .pdesc{color:rgba(255,255,255,0.75);}
+
+.plabel{font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;}
+.pcard-std .plabel{color:var(--gray400);}
+.pcard-pro .plabel{color:rgba(255,255,255,0.6);}
+
+.psetup{font-size:22px;font-weight:800;margin-bottom:16px;}
+.pcard-std .psetup{color:var(--gray800);}
+.pcard-pro .psetup{color:white;}
+
+.psetup-label{font-size:11px;font-weight:500;}
+.pcard-std .psetup-label{color:var(--gray400);}
+.pcard-pro .psetup-label{color:rgba(255,255,255,0.6);}
+
+.pdiv{height:1px;margin:18px 0;}
+.pcard-std .pdiv{background:var(--gray200);}
+.pcard-pro .pdiv{background:rgba(255,255,255,0.2);}
+
+.pprice-big{font-size:36px;font-weight:900;line-height:1;}
+.pcard-std .pprice-big{color:var(--cintec);}
+.pcard-pro .pprice-big{color:white;}
+.pprice-period{font-size:12px;font-weight:500;margin-top:4px;margin-bottom:20px;}
+.pcard-std .pprice-period{color:var(--gray400);}
+.pcard-pro .pprice-period{color:rgba(255,255,255,0.65);}
+
+.pincludes{font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;
+  margin-bottom:12px;}
+.pcard-std .pincludes{color:var(--gray400);}
+.pcard-pro .pincludes{color:rgba(255,255,255,0.6);}
+
+.flist{list-style:none;}
+.flist li{font-size:12px;padding:5px 0;display:flex;align-items:flex-start;gap:8px;line-height:1.45;}
+.pcard-std .flist li{color:var(--gray600);}
+.pcard-pro .flist li{color:rgba(255,255,255,0.88);}
+.flist li::before{content:'✓';font-weight:800;font-size:11px;flex-shrink:0;margin-top:1px;}
+.pcard-std .flist li::before{color:#16a34a;}
+.pcard-pro .flist li::before{color:rgba(255,255,255,0.9);}
+
+.savings-badge{display:inline-block;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);
+  color:white;font-size:11px;font-weight:700;padding:5px 14px;border-radius:8px;margin-top:16px;}
+
+/* DESGLOSE TABLE */
+.ctable{width:100%;border-collapse:collapse;border-radius:12px;overflow:hidden;
+  box-shadow:0 1px 4px rgba(0,0,0,0.07);}
+.ctable thead tr{background:var(--cintec);color:white;}
+.ctable th{padding:11px 18px;text-align:left;font-size:11px;font-weight:600;
+  letter-spacing:1px;text-transform:uppercase;}
+.ctable th:last-child{text-align:right;}
+.ctable tbody tr{border-bottom:1px solid var(--gray200);background:white;}
+.ctable tbody tr:nth-child(even){background:#f8fafc;}
+.ctable td{padding:10px 18px;font-size:13px;color:var(--gray800);}
+.ctable td:last-child{text-align:right;font-weight:600;}
+.ctable .total-row{background:var(--gray800) !important;}
+.ctable .total-row td{color:white;font-weight:700;font-size:14px;padding:13px 18px;}
+.ctable .total-row td:last-child{color:#fbbf24;}
+.note{font-size:11px;color:var(--gray400);margin-top:10px;font-style:italic;}
+
+/* ROI */
+.roi-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:start;}
+.roi-box{background:white;border-radius:16px;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.07);}
+.roi-title{font-size:15px;font-weight:700;margin-bottom:18px;padding-bottom:12px;
+  border-bottom:2px solid var(--gray200);}
+.roi-row{display:flex;justify-content:space-between;align-items:center;
+  padding:9px 0;border-bottom:1px dashed var(--gray200);}
+.roi-row:last-child{border:none;}
+.roi-rl{font-size:12px;color:var(--gray600);}
+.roi-rv{font-size:14px;font-weight:700;}
+.roi-rv.green{color:#16a34a;}
+.roi-rv.red{color:var(--cintec);}
+.roi-total{display:flex;justify-content:space-between;align-items:center;
+  background:var(--cintec);color:white;padding:14px 18px;border-radius:10px;margin-top:14px;}
+.roi-tl{font-size:12px;font-weight:600;}
+.roi-tv{font-size:22px;font-weight:900;}
+
+/* STEPS */
+.steps{display:flex;gap:0;margin-top:24px;}
+.step{flex:1;text-align:center;position:relative;padding:0 8px;}
+.step:not(:last-child)::after{content:'';position:absolute;top:22px;left:60%;
+  width:80%;height:2px;background:var(--gray200);}
+.step-circle{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-weight:700;font-size:14px;margin:0 auto 10px;
+  position:relative;z-index:1;border:2px solid;}
+.s1{background:#dcfce7;color:#15803d;border-color:#86efac;}
+.s2{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd;}
+.s3{background:#fef9c3;color:#92400e;border-color:#fde68a;}
+.s4{background:#fce7f3;color:#be185d;border-color:#f9a8d4;}
+.step-label{font-size:12px;font-weight:600;color:var(--gray800);margin-bottom:4px;}
+.step-sub{font-size:10px;color:var(--gray400);line-height:1.4;}
+
+/* CTA */
+.cta-box{background:white;border-radius:18px;padding:36px 40px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.08);max-width:640px;margin:0 auto;}
+.cta-title{font-size:24px;font-weight:800;color:var(--gray800);margin-bottom:10px;}
+.cta-sub{font-size:14px;color:var(--gray600);margin-bottom:28px;line-height:1.6;}
+.cta-contacts{display:flex;flex-direction:column;gap:10px;}
+.cta-row{display:flex;align-items:center;gap:12px;font-size:14px;color:var(--gray700);}
+.cta-icon{font-size:20px;}
+</style>
+</head>
+<body>
+
+<!-- ═══ SLIDE 1 — PORTADA ════════════════════════════════════ -->
+<div class="slide slide-cover">
+  <div class="cover-circle1"></div>
+  <div class="cover-circle2"></div>
+  <div class="cover-circle3"></div>
+
+  <div class="logo-block">
+    <div class="logo-mark">C</div>
+    <div class="logo-text">CINTEC</div>
+  </div>
+
+  <div class="cover-badge">Propuesta Comercial · Junio 2026</div>
+  <h1 class="cover-title">Bot WhatsApp<br><em>de Ventas Automatizado</em></h1>
+  <p class="cover-sub">
+    Solución completa de atención y cotización 24/7 para CINTEC,
+    construida sobre WhatsApp Business API con inteligencia artificial.
+    Precios expresados en <strong style="color:white">Pesos Chilenos (CLP)</strong>.
+  </p>
+  <div class="cover-chips">
+    <span class="chip">⚡ Operativo hoy</span>
+    <span class="chip">🤖 IA integrada</span>
+    <span class="chip">📊 Reportes en tiempo real</span>
+    <span class="chip">🔒 Seguridad enterprise</span>
+  </div>
+
+  <div class="cover-footer">
+    Versión CLP · <strong>Junio 2026</strong>
+  </div>
+</div>
+
+<!-- ═══ SLIDE 2 — QUÉ INCLUYE ════════════════════════════════ -->
+<div class="slide slide-white">
+  <div class="sec-tag">El servicio</div>
+  <h2 class="sec-h">¿Qué incluye el bot?</h2>
+  <p class="sec-p">Un sistema completo ya desarrollado, desplegado y operativo que automatiza el proceso de cotización de CINTEC en WhatsApp.</p>
+
+  <div class="feat-grid">
+    <div class="fcard">
+      <div class="fcard-icon">💬</div>
+      <div class="fcard-title">Atención 24/7 por WhatsApp</div>
+      <div class="fcard-desc">El bot responde clientes de forma inmediata en cualquier horario, sin intervención humana.</div>
+    </div>
+    <div class="fcard">
+      <div class="fcard-icon">📦</div>
+      <div class="fcard-title">Cotización automatizada</div>
+      <div class="fcard-desc">Flujo completo: RUT → razón social → selección de productos → email con cotización en PDF.</div>
+    </div>
+    <div class="fcard">
+      <div class="fcard-icon">🧠</div>
+      <div class="fcard-title">Inteligencia Artificial</div>
+      <div class="fcard-desc">Claude AI responde preguntas libres sobre productos, precios y disponibilidad durante el flujo.</div>
+    </div>
+    <div class="fcard">
+      <div class="fcard-icon">🗂️</div>
+      <div class="fcard-title">Catálogo sincronizado</div>
+      <div class="fcard-desc">Se conecta a Google Sheets para leer productos y precios actualizados en tiempo real.</div>
+    </div>
+    <div class="fcard">
+      <div class="fcard-icon">👤</div>
+      <div class="fcard-title">Detección de clientes</div>
+      <div class="fcard-desc">Identifica clientes existentes vs nuevos por RUT y aplica precios diferenciados automáticamente.</div>
+    </div>
+    <div class="fcard">
+      <div class="fcard-icon">🚿</div>
+      <div class="fcard-title">Flujo especialista hidro</div>
+      <div class="fcard-desc">Proceso dedicado para hidrolavadoras con 7 preguntas técnicas y formulario web para el especialista.</div>
+    </div>
+    <div class="fcard">
+      <div class="fcard-icon">🔔</div>
+      <div class="fcard-title">Notificaciones al equipo</div>
+      <div class="fcard-desc">Emails automáticos cuando un cliente solicita ejecutivo, cotización enviada o bajo margen detectado.</div>
+    </div>
+    <div class="fcard">
+      <div class="fcard-icon">📊</div>
+      <div class="fcard-title">Panel de reportes</div>
+      <div class="fcard-desc">Dashboard web con estadísticas: cotizaciones por día, productos más cotizados, clientes nuevos vs existentes.</div>
+    </div>
+    <div class="fcard">
+      <div class="fcard-icon">🔒</div>
+      <div class="fcard-title">Seguridad enterprise</div>
+      <div class="fcard-desc">Rate limiting, protección XSS, CSP con nonce, tokens separados por función y credenciales cifradas.</div>
+    </div>
+  </div>
+  <div class="page-num">2 / 5</div>
+</div>
+
+<!-- ═══ SLIDE 3 — PRECIOS ═════════════════════════════════════ -->
+<div class="slide slide-gray">
+  <div class="sec-tag">Inversión</div>
+  <h2 class="sec-h">Planes disponibles</h2>
+  <p class="sec-p">Elige el plan que mejor se adapta a tu proyección de uso. Todos incluyen la implementación ya realizada y soporte continuo.</p>
+
+  <div class="price-grid">
+    <!-- PLAN MENSUAL -->
+    <div class="pcard pcard-std">
+      <div class="ptag ptag-std">Plan Mensual</div>
+      <div class="pname">Estándar</div>
+      <div class="pdesc">Flexibilidad mes a mes con posibilidad de escalar.</div>
+
+      <div class="plabel">Implementación (pago único)</div>
+      <div class="psetup">$970.000 <span class="psetup-label">+ IVA · una sola vez</span></div>
+
+      <div class="pdiv"></div>
+
+      <div class="plabel">Servicio mensual</div>
+      <div class="pprice-big">$194.000</div>
+      <div class="pprice-period">+ IVA · por mes · sin contrato</div>
+
+      <div class="pdiv"></div>
+
+      <div class="pincludes">incluye cada mes</div>
+      <ul class="flist">
+        <li>Infraestructura Railway (servidor 24/7)</li>
+        <li>APIs: WhatsApp Business, Claude AI, Resend</li>
+        <li>Monitoreo y alertas de caídas</li>
+        <li>Soporte técnico y correcciones</li>
+        <li>Actualizaciones de seguridad</li>
+        <li>Panel de reportes siempre activo</li>
+      </ul>
+    </div>
+
+    <!-- PLAN ANUAL -->
+    <div class="pcard pcard-pro">
+      <div class="ptag ptag-pro">Plan Anual</div>
+      <div class="pname">Preferencial</div>
+      <div class="pdesc">El más conveniente: 2 meses de servicio sin costo.</div>
+
+      <div class="plabel">Implementación (pago único)</div>
+      <div class="psetup">$970.000 <span class="psetup-label">+ IVA · una sola vez</span></div>
+
+      <div class="pdiv"></div>
+
+      <div class="plabel">Servicio anual (equivale a 10 meses)</div>
+      <div class="pprice-big">$1.940.000</div>
+      <div class="pprice-period">+ IVA · pago adelantado · ahorra $388.000</div>
+
+      <div class="pdiv"></div>
+
+      <div class="pincludes">todo lo del plan mensual, más</div>
+      <ul class="flist">
+        <li>2 meses de servicio sin costo adicional</li>
+        <li>Prioridad en soporte y respuesta</li>
+        <li>1 mejora de flujo o funcionalidad al año</li>
+        <li>Revisión de rendimiento semestral</li>
+      </ul>
+
+      <div class="savings-badge">Ahorro anual: $388.000 + IVA</div>
+    </div>
+  </div>
+  <div class="page-num">3 / 5</div>
+</div>
+
+<!-- ═══ SLIDE 4 — DESGLOSE Y ROI ══════════════════════════════ -->
+<div class="slide slide-white">
+  <div class="sec-tag">Análisis de inversión</div>
+  <h2 class="sec-h">Desglose de costos y retorno</h2>
+  <p class="sec-p">Comparativa entre operar sin bot (proceso manual) versus operar con el bot contratado.</p>
+
+  <div class="roi-grid">
+    <div>
+      <table class="ctable">
+        <thead>
+          <tr>
+            <th>Concepto (mensual)</th>
+            <th style="text-align:right">Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Servidor Railway (infraestructura)</td>
+            <td>$14.000</td>
+          </tr>
+          <tr>
+            <td>Claude AI (Haiku · consultas libres)</td>
+            <td>$3.800</td>
+          </tr>
+          <tr>
+            <td>Resend (emails transaccionales)</td>
+            <td>$2.900</td>
+          </tr>
+          <tr>
+            <td>WhatsApp Business API (Meta)</td>
+            <td>$9.700</td>
+          </tr>
+          <tr>
+            <td>Mantenimiento y soporte técnico</td>
+            <td>$163.600</td>
+          </tr>
+          <tr class="total-row">
+            <td>Total servicio mensual</td>
+            <td>$194.000</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">* Precios de APIs en USD convertidos a CLP al tipo de cambio del día. El ítem "mantenimiento" incluye actualizaciones, revisión de logs y soporte.</p>
+    </div>
+
+    <div class="roi-box">
+      <div class="roi-title">⚖️ ROI estimado mensual</div>
+      <div class="roi-row">
+        <span class="roi-rl">Costo proceso manual (2 hrs ejecutivo/día)</span>
+        <span class="roi-rv red">−$420.000</span>
+      </div>
+      <div class="roi-row">
+        <span class="roi-rl">Costo bot (plan mensual)</span>
+        <span class="roi-rv red">−$194.000</span>
+      </div>
+      <div class="roi-row">
+        <span class="roi-rl">Ahorro mensual estimado</span>
+        <span class="roi-rv green">+$226.000</span>
+      </div>
+      <div class="roi-row">
+        <span class="roi-rl">Cotizaciones adicionales (disponibilidad 24/7)</span>
+        <span class="roi-rv green">+ventas</span>
+      </div>
+      <div class="roi-row">
+        <span class="roi-rl">Tiempo de recuperación (plan anual)</span>
+        <span class="roi-rv" style="color:#1d4ed8">~13 meses</span>
+      </div>
+      <div class="roi-total">
+        <span class="roi-tl">Ahorro estimado año 1</span>
+        <span class="roi-tv">+$1.284.000</span>
+      </div>
+    </div>
+  </div>
+  <div class="page-num">4 / 5</div>
+</div>
+
+<!-- ═══ SLIDE 5 — PRÓXIMOS PASOS ══════════════════════════════ -->
+<div class="slide slide-dark">
+  <div class="sec-tag">Comenzar</div>
+  <h2 class="sec-h" style="color:white">Próximos pasos</h2>
+  <p class="sec-p">El bot ya está operativo en el número de prueba. El traspaso al número real de CINTEC toma menos de 48 horas.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-circle s1">1</div>
+      <div class="step-label">Aprobación</div>
+      <div class="step-sub">Confirmar plan elegido y<br>emitir orden de compra</div>
+    </div>
+    <div class="step">
+      <div class="step-circle s2">2</div>
+      <div class="step-label">Número real</div>
+      <div class="step-sub">Vincular número oficial<br>de CINTEC a Meta API</div>
+    </div>
+    <div class="step">
+      <div class="step-circle s3">3</div>
+      <div class="step-label">Configuración</div>
+      <div class="step-sub">Ajustar catálogo,<br>emails y flujos</div>
+    </div>
+    <div class="step">
+      <div class="step-circle s4">4</div>
+      <div class="step-label">Lanzamiento</div>
+      <div class="step-sub">Bot en producción<br>con número real</div>
+    </div>
+  </div>
+
+  <div style="margin-top:52px;text-align:center;">
+    <div class="cta-box">
+      <div class="cta-title">¿Listo para automatizar las ventas?</div>
+      <div class="cta-sub">El equipo está disponible para coordinar la activación del número real y hacer los ajustes finales antes del lanzamiento.</div>
+      <div class="cta-contacts">
+        <div class="cta-row"><span class="cta-icon">📧</span> mancillagino@gmail.com</div>
+        <div class="cta-row"><span class="cta-icon">💬</span> Respuesta en menos de 24 horas hábiles</div>
+      </div>
+    </div>
+  </div>
+  <div class="page-num" style="color:#4c5060">5 / 5</div>
+</div>
+
+</body>
+</html>
