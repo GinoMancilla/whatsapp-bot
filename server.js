@@ -304,6 +304,7 @@ const STOP_WORDS_ENVASE = new Set([
   "balde", "baldes", "tambor", "tambores", "galon", "galones",
   "envase", "envases", "botella", "botellas", "de", "del",
   "un", "una", "uno", "unos", "unas", "talla",
+  "unidad", "unidades",
   // Palabras de intención (por si no se stripearon en el parser)
   "necesito", "quiero", "quisiera", "dame", "busco", "requiero", "preciso",
 ]);
@@ -770,8 +771,11 @@ async function buscarParaClienteNuevo(phone, session, item) {
   if (allKeywords.length > 1 && fase1.length > 0) {
     const secundarias = allKeywords.slice(1);
     const fase2 = fase1.filter(p => {
-      const desc = normalizar(p.DesProd);
-      return secundarias.some(k => desc.includes(k) || desc.includes(stemES(k)));
+      const desc = normalizar(p.DesProd).replace(/-/g, "");
+      return secundarias.some(k => {
+        const kn = k.replace(/-/g, "");
+        return desc.includes(kn) || desc.includes(stemES(kn));
+      });
     });
     if (fase2.length > 0) encontrados = fase2;
   }
@@ -1161,7 +1165,7 @@ async function mostrarResumenFinal(phone, session) {
     msg += `_Un representante te contactará._\n\n`;
   }
   if (noEncontrados.length > 0) {
-    msg += `ℹ️ Sin disponibilidad de: ${noEncontrados.join(", ")}\n\n`;
+    msg += `ℹ️ No encontrado en catálogo: ${noEncontrados.join(", ")}\nUn representante revisará disponibilidad.\n\n`;
   }
 
   msg += `📧 ¿A qué *correo electrónico* enviamos la cotización?`;
@@ -1244,13 +1248,15 @@ function buscarEnCatalogo(rows, keywords) {
   const catalogo = Object.values(unicosPorCod);
 
   return catalogo.filter(row => {
-    const desc  = normalizar(row["DesProd"] || "");
-    const cod   = (row["CodProd"] || "").toLowerCase();
+    // Quitar guiones para que "x80" encuentre "X-80", "x-80" encuentre "x80", etc.
+    const desc  = normalizar(row["DesProd"] || "").replace(/-/g, "");
+    const cod   = (row["CodProd"] || "").toLowerCase().replace(/-/g, "");
     const precio = parsearPrecio(row["Precio Lista"]);
     if (precio <= 0) return false;
     return keywords.some(k => {
-      const stem = stemES(k);
-      return desc.includes(k) || desc.includes(stem) || cod.includes(k) || cod.includes(stem);
+      const kn   = k.replace(/-/g, "");
+      const stem = stemES(kn);
+      return desc.includes(kn) || desc.includes(stem) || cod.includes(kn) || cod.includes(stem);
     });
   });
 }
