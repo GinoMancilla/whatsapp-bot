@@ -788,6 +788,26 @@ async function buscarParaClienteNuevo(phone, session, item) {
   }
 
   if (encontrados.length === 0) {
+    // Búsqueda ampliada: cada keyword por separado para mostrar opciones cercanas
+    const vistoCod = new Set();
+    const ampliados = [];
+    for (const kw of allKeywords) {
+      for (const p of buscarEnCatalogo(session.data.rows, [kw])) {
+        if (!vistoCod.has(p.CodProd)) { vistoCod.add(p.CodProd); ampliados.push(p); }
+      }
+      if (ampliados.length >= 6) break;
+    }
+
+    if (ampliados.length > 0) {
+      await sendMessage(phone,
+        `ℹ️ No encontré _"${item.nombre}"_ exactamente en nuestro catálogo.\n` +
+        `Estas son las opciones más cercanas que tenemos:`
+      );
+      await mostrarOpcionesProducto(phone, session, ampliados, item);
+      return;
+    }
+
+    // Sin resultados ni parciales → derivar a representante
     session.data.productosNoEncontrados.push(item.nombre);
     await sendMessage(phone,
       `ℹ️ No encontré _"${item.nombre}"_ en nuestro catálogo.\n` +
