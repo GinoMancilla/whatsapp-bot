@@ -271,7 +271,7 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',sans-serif;background:
 
 /* ═══ SLIDE 9 — COSTOS ═══════════════════════════════════════ */
 .s9{background:var(--white);}
-.cost-wrap{display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%;max-width:820px;}
+.cost-wrap{display:flex;justify-content:center;width:100%;max-width:820px;}
 .cost-card{border-radius:20px;padding:32px 28px;position:relative;overflow:hidden;}
 .cc-std{background:#f0fdf4;border:2px solid #86efac;}
 .cc-pro{background:linear-gradient(140deg,#1a0002,#8b0008,#c40710);color:white;}
@@ -677,38 +677,34 @@ html,body{height:100%;overflow:hidden;font-family:'Inter',sans-serif;background:
     <h2 class="h2">Planes disponibles en UF</h2>
     <p class="sub" style="margin-bottom:24px;">Precios en UF = protección contra la inflación. El costo real en pesos no varía con el tiempo.</p>
     <div class="cost-wrap">
-      <div class="cost-card cc-std">
-        <div class="cc-tag">Plan Mensual</div>
-        <div class="cc-name">Estándar</div>
-        <div class="cc-price">8</div>
-        <div class="cc-unit">UF / mes + IVA</div>
-        <div class="cc-equiv">≈ $310.400/mes hoy · sin contrato mínimo</div>
-        <div>+ <b>25 UF</b> implementación única ≈ $970.000</div>
+      <div class="cost-card cc-std" style="max-width:520px;width:100%;">
+        <div class="cc-tag">Plan Estándar</div>
+        <div class="cc-name">Servicio Mensual</div>
+        <div style="display:flex;align-items:flex-end;gap:32px;margin-bottom:8px;">
+          <div>
+            <div style="font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Implementación única</div>
+            <div style="font-size:26px;font-weight:800;color:#1e293b;">25 UF <span style="font-size:13px;font-weight:500;color:#94a3b8;">+ IVA</span></div>
+            <div style="font-size:11px;color:#15803d;">≈ $970.000</div>
+          </div>
+          <div style="font-size:28px;color:#94a3b8;">+</div>
+          <div>
+            <div style="font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Mantención mensual</div>
+            <div class="cc-price" style="font-size:52px;">8</div>
+            <div class="cc-unit">UF / mes + IVA</div>
+            <div class="cc-equiv">≈ $310.400/mes · sin contrato mínimo</div>
+          </div>
+        </div>
         <div class="cc-div"></div>
-        <ul class="cc-list">
+        <ul class="cc-list" style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;">
           <li>Servidor Railway activo 24/7</li>
           <li>WhatsApp Business API (Meta)</li>
-          <li>Claude AI + Resend emails</li>
-          <li>Soporte y actualizaciones</li>
+          <li>Claude AI (consultas libres)</li>
+          <li>Resend — emails transaccionales</li>
+          <li>Soporte técnico y correcciones</li>
+          <li>Actualizaciones de seguridad</li>
           <li>Panel de reportes incluido</li>
+          <li>Monitoreo y alertas de caídas</li>
         </ul>
-      </div>
-      <div class="cost-card cc-pro">
-        <div class="cc-tag">Plan Anual</div>
-        <div class="cc-name">Preferencial</div>
-        <div class="cc-price">50</div>
-        <div class="cc-unit">UF / año + IVA</div>
-        <div class="cc-equiv">≈ $1.940.000/año hoy · precio especial</div>
-        <div style="color:rgba(255,255,255,0.7);font-size:13px;">+ <b style="color:white">25 UF</b> implementación única</div>
-        <div class="cc-div"></div>
-        <ul class="cc-list">
-          <li>Todo lo del plan mensual</li>
-          <li>2 meses de servicio sin costo</li>
-          <li>Soporte prioritario</li>
-          <li>1 mejora de flujo al año</li>
-          <li>Revisión de rendimiento semestral</li>
-        </ul>
-        <div class="cc-savings">💰 Ahorro: 46 UF ≈ $1.784.800 vs mensual × 12</div>
       </div>
     </div>
     <div class="cost-bottom">
