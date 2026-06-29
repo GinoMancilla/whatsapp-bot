@@ -1934,10 +1934,33 @@ app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), asy
 </body></html>`);
 });
 
+// ─── Sesiones del panel de control ───────────────────────────────────────────
+const panelSessions = new Map();
+const PANEL_TTL = 8 * 60 * 60 * 1000;
+
+function getPanelSession(req) {
+  const m = (req.headers.cookie || "").match(/(?:^|;\s*)panel_sid=([^;]+)/);
+  if (!m) return null;
+  const exp = panelSessions.get(m[1]);
+  if (!exp || Date.now() > exp) { panelSessions.delete(m[1]); return null; }
+  return m[1];
+}
+function createPanelSession(res) {
+  const sid = crypto.randomBytes(32).toString("hex");
+  panelSessions.set(sid, Date.now() + PANEL_TTL);
+  res.setHeader("Set-Cookie", `panel_sid=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${PANEL_TTL / 1000}`);
+}
+function clearPanelSession(req, res) {
+  const m = (req.headers.cookie || "").match(/(?:^|;\s*)panel_sid=([^;]+)/);
+  if (m) panelSessions.delete(m[1]);
+  res.setHeader("Set-Cookie", "panel_sid=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+}
+
 // ─── Panel de control KPI ─────────────────────────────────────────────────────
-app.get("/reporte", (req, res) => {
-  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
-  if (req.query.token !== REPORT_TOKEN) return res.status(401).send("No autorizado.");
+function buildKPIPage(nonce, showLogout = false) {
+  const cotizaciones  = cotizacionesLog.filter(e => e.tipo === "cotizacion");
+  const contactos     = cotizacionesLog.filter(e => e.tipo === "contacto");
+  const problematicas = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
 
   const cotizaciones  = cotizacionesLog.filter(e => e.tipo === "cotizacion");
   const contactos     = cotizacionesLog.filter(e => e.tipo === "contacto");
@@ -2095,8 +2118,9 @@ tbody tr:hover td{background:#FAFAFA}
     <span class="badge-live"><span class="dot-live"></span>En vivo</span>
     <div class="hdr-right">
       Actualizado<br>${new Date().toLocaleString("es-CL",{timeZone:"America/Santiago"})}<br>
-      <a href="?" style="color:rgba(255,255,255,.7);font-size:10px;text-decoration:none">↻ Actualizar</a>
+      <a href="" style="color:rgba(255,255,255,.7);font-size:10px;text-decoration:none">↻ Actualizar</a>
     </div>
+    ${showLogout ? `<a href="/panel/logout" style="color:rgba(255,255,255,.85);font-size:11px;text-decoration:none;background:rgba(0,0,0,.25);border-radius:20px;padding:6px 16px;font-weight:600;white-space:nowrap">⎋ Cerrar sesión</a>` : ""}
   </div>
 </div>
 
@@ -2342,7 +2366,99 @@ new Chart(document.getElementById('chartMonto'), {
 });
 </script>
 </body>
+</html>`;
+}
+
+// ─── /reporte — acceso por token (URL anterior sigue funcionando) ─────────────
+app.get("/reporte", (req, res) => {
+  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (req.query.token !== REPORT_TOKEN) return res.status(401).send("No autorizado.");
+  const nonce = crypto.randomBytes(16).toString("base64");
+  res.setHeader("Content-Security-Policy",
+    `default-src 'none'; script-src 'nonce-${nonce}' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: https:; connect-src 'none'`
+  );
+  res.send(buildKPIPage(nonce, false));
+});
+
+// ─── /panel — acceso con login ────────────────────────────────────────────────
+app.get("/panel/login", (req, res) => {
+  if (getPanelSession(req)) return res.redirect("/panel");
+  const error = req.query.error === "1";
+  res.send(`<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CINTEC · Acceso Panel</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;
+     background:linear-gradient(135deg,#8B0008 0%,#ED0914 60%,#FF4444 100%);
+     font-family:'Segoe UI',Arial,sans-serif}
+.card{background:#fff;border-radius:18px;padding:40px 44px;width:100%;max-width:380px;
+      box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.logo{text-align:center;margin-bottom:26px}
+.logo img{height:38px}
+h1{font-size:18px;font-weight:700;color:#1E293B;text-align:center;margin-bottom:5px}
+.sub{font-size:12px;color:#94A3B8;text-align:center;margin-bottom:26px}
+label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+      color:#64748B;display:block;margin-bottom:5px}
+input{width:100%;border:1.5px solid #E2E8F0;border-radius:9px;padding:11px 14px;
+      font-size:14px;color:#1E293B;outline:none;margin-bottom:16px;transition:border .2s;background:#fff}
+input:focus{border-color:#ED0914;box-shadow:0 0 0 3px rgba(237,9,20,.08)}
+button{width:100%;background:#ED0914;color:#fff;border:none;border-radius:9px;
+       padding:13px;font-size:14px;font-weight:700;cursor:pointer;transition:background .2s;margin-top:4px}
+button:hover{background:#C0071B}
+.err{background:#FEF2F2;border:1px solid #FCA5A5;color:#991B1B;border-radius:8px;
+     padding:10px 14px;font-size:12px;margin-bottom:18px;text-align:center}
+.foot{text-align:center;font-size:10px;color:#CBD5E1;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <img src="https://assets.jumpseller.com/store/cintecsa/themes/954643/settings/e6f636bc6ca9fb2e0341/logo%20cintec%20color_.png?1771944795"
+         alt="CINTEC" onerror="this.style.display='none'">
+  </div>
+  <h1>Panel de Control</h1>
+  <p class="sub">Bot WhatsApp · Estadísticas internas</p>
+  ${error ? '<div class="err">⚠️ Usuario o contraseña incorrectos</div>' : ""}
+  <form method="POST" action="/panel/login">
+    <label for="u">Usuario</label>
+    <input type="text" id="u" name="user" placeholder="Tu usuario" autocomplete="username" required>
+    <label for="p">Contraseña</label>
+    <input type="password" id="p" name="pass" placeholder="Tu contraseña" autocomplete="current-password" required>
+    <button type="submit">Ingresar →</button>
+  </form>
+  <div class="foot">CINTEC · Acceso restringido al equipo interno</div>
+</div>
+</body>
 </html>`);
+});
+
+app.post("/panel/login", express.urlencoded({ extended: false }), (req, res) => {
+  const PANEL_USER = process.env.PANEL_USER || "cintec";
+  const PANEL_PASS = process.env.PANEL_PASS || "";
+  if (!PANEL_PASS) return res.status(500).send("PANEL_PASS no está configurado en Railway.");
+  if (req.body.user === PANEL_USER && req.body.pass === PANEL_PASS) {
+    createPanelSession(res);
+    return res.redirect("/panel");
+  }
+  res.redirect("/panel/login?error=1");
+});
+
+app.get("/panel", (req, res) => {
+  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (!getPanelSession(req)) return res.redirect("/panel/login");
+  const nonce = crypto.randomBytes(16).toString("base64");
+  res.setHeader("Content-Security-Policy",
+    `default-src 'none'; script-src 'nonce-${nonce}' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: https:; connect-src 'none'`
+  );
+  res.send(buildKPIPage(nonce, true));
+});
+
+app.get("/panel/logout", (req, res) => {
+  clearPanelSession(req, res);
+  res.redirect("/panel/login");
 });
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
