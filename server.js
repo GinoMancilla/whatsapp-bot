@@ -27,6 +27,12 @@ const {
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
 if (!WHATSAPP_APP_SECRET) console.warn("⚠️  WHATSAPP_APP_SECRET no configurado — verificación de firma Meta desactivada. Configúralo en Railway.");
 
+// Números de prueba (pueden usar comandos /reset /status sin afectar clientes reales)
+const TEST_PHONES = new Set(
+  (process.env.TEST_PHONES || "").split(",").map(n => n.trim()).filter(Boolean)
+);
+if (TEST_PHONES.size > 0) console.log(`🧪 Números de prueba registrados: ${[...TEST_PHONES].join(", ")}`);
+
 // Tokens separados por propósito — fallback a VERIFY_TOKEN si no están configurados
 const REPORT_TOKEN     = process.env.REPORT_TOKEN     || VERIFY_TOKEN;
 const SPECIALIST_TOKEN = process.env.SPECIALIST_TOKEN || VERIFY_TOKEN;
@@ -384,6 +390,32 @@ async function handleMessage(phone, text) {
   if (!session.data.mensajesRecientes) session.data.mensajesRecientes = [];
   session.data.mensajesRecientes.push({ ts: new Date().toISOString(), text });
   if (session.data.mensajesRecientes.length > 5) session.data.mensajesRecientes.shift();
+
+  // ── Comandos exclusivos para números de prueba ────────────────────────────
+  if (TEST_PHONES.has(phone)) {
+    if (text === "/reset") {
+      delete sessions[phone];
+      await sendMessage(phone, `🧪 _[TEST]_ Sesión reiniciada. El bot responderá como si fuera un cliente nuevo.`);
+      return;
+    }
+    if (text === "/status") {
+      const s = sessions[phone];
+      const step = s?.step ?? "sin sesión";
+      const data = s ? JSON.stringify({ rut: s.data.rut, razon: s.data.razonSocial, step }, null, 2) : "{}";
+      await sendMessage(phone, `🧪 _[TEST]_ Estado actual:\n\`\`\`\n${data}\n\`\`\``);
+      return;
+    }
+    if (text === "/help") {
+      await sendMessage(phone,
+        `🧪 *Comandos de prueba disponibles:*\n` +
+        `• */reset* — Reinicia tu sesión (cliente nuevo)\n` +
+        `• */status* — Muestra el estado actual de tu sesión\n` +
+        `• */help* — Muestra este menú\n\n` +
+        `_Los demás mensajes funcionan igual que para un cliente real._`
+      );
+      return;
+    }
+  }
 
   // ── Comando STOP: cerrar conversación (cumplimiento Meta) ──────────────────
   if (/^(stop|detener|cancelar|salir|para|basta)$/i.test(normalizar(text))) {
