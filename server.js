@@ -1934,193 +1934,413 @@ app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), asy
 </body></html>`);
 });
 
-// ─── Reporte de estadísticas ──────────────────────────────────────────────────
+// ─── Panel de control KPI ─────────────────────────────────────────────────────
 app.get("/reporte", (req, res) => {
   if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
   if (req.query.token !== REPORT_TOKEN) return res.status(401).send("No autorizado.");
 
-  const cotizaciones    = cotizacionesLog.filter(e => e.tipo === "cotizacion");
-  const contactos       = cotizacionesLog.filter(e => e.tipo === "contacto");
-  const problematicas   = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
+  const cotizaciones  = cotizacionesLog.filter(e => e.tipo === "cotizacion");
+  const contactos     = cotizacionesLog.filter(e => e.tipo === "contacto");
+  const problematicas = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
 
-  const nuevos     = cotizaciones.filter(c => c.esClienteNuevo).length;
-  const existentes = cotizaciones.filter(c => !c.esClienteNuevo).length;
-  const totalMonto = cotizaciones.reduce((s, c) => s + (c.total || 0), 0);
+  // ── KPIs principales ────────────────────────────────────────────────────────
+  const nuevos      = cotizaciones.filter(c => c.esClienteNuevo).length;
+  const existentes  = cotizaciones.filter(c => !c.esClienteNuevo).length;
+  const totalMonto  = cotizaciones.reduce((s, c) => s + (c.total || 0), 0);
+  const ticketProm  = cotizaciones.length ? Math.round(totalMonto / cotizaciones.length) : 0;
+  const clientesUnicos = new Set(cotizaciones.map(c => c.rut).filter(Boolean)).size;
 
-  // Top productos más cotizados
-  const prodMap = {};
-  cotizaciones.forEach(c => {
-    (c.productos || []).forEach(p => {
-      const k = p.codigo || p.descripcion;
-      if (!prodMap[k]) prodMap[k] = { descripcion: p.descripcion || k, veces: 0, unidades: 0 };
-      prodMap[k].veces++;
-      prodMap[k].unidades += p.cantidad;
-    });
-  });
-  const topProductos = Object.values(prodMap).sort((a, b) => b.veces - a.veces).slice(0, 10);
+  // Últimos 7 días
+  const hace7  = Date.now() - 7  * 86400000;
+  const hace30 = Date.now() - 30 * 86400000;
+  const cot7d  = cotizaciones.filter(c => new Date(c.timestamp).getTime() > hace7).length;
+  const monto7d = cotizaciones.filter(c => new Date(c.timestamp).getTime() > hace7)
+                              .reduce((s, c) => s + (c.total || 0), 0);
 
-  // Cotizaciones por día (últimos 30 días)
+  // ── Cotizaciones por día (30 días) ──────────────────────────────────────────
   const porDia = {};
-  const hace30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
   cotizaciones.filter(c => new Date(c.timestamp).getTime() > hace30).forEach(c => {
     const dia = c.timestamp.slice(0, 10);
     porDia[dia] = (porDia[dia] || 0) + 1;
   });
+  const diasOrdenados = Object.keys(porDia).sort();
 
-  const filasProductos = topProductos.map((p, i) => `
-    <tr style="background:${i % 2 === 0 ? "#fff" : "#f9f9f9"}">
-      <td style="padding:8px 12px">${i + 1}</td>
-      <td style="padding:8px 12px">${escapeHtml(p.descripcion)}</td>
-      <td style="padding:8px 12px;text-align:center">${p.veces}</td>
-      <td style="padding:8px 12px;text-align:center">${p.unidades}</td>
-    </tr>`).join("");
+  // ── Por hora del día ────────────────────────────────────────────────────────
+  const porHora = Array(24).fill(0);
+  cotizaciones.forEach(c => {
+    const h = new Date(c.timestamp).getHours();
+    porHora[h]++;
+  });
 
-  const filasRecientes = [...cotizaciones].reverse().slice(0, 20).map(c => `
-    <tr>
-      <td style="padding:6px 10px;font-size:12px">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago"})}</td>
-      <td style="padding:6px 10px">${escapeHtml(c.razonSocial)}</td>
-      <td style="padding:6px 10px;text-align:center">${c.esClienteNuevo ? "🆕 Nuevo" : "✅ Existente"}</td>
-      <td style="padding:6px 10px;text-align:right">$${(c.total || 0).toLocaleString("es-CL")}</td>
-      <td style="padding:6px 10px;font-size:12px">${escapeHtml(c.emailCliente)}</td>
-    </tr>`).join("");
+  // ── Productos: veces, unidades y monto ──────────────────────────────────────
+  const prodMap = {};
+  cotizaciones.forEach(c => {
+    (c.productos || []).forEach(p => {
+      const k = p.codigo || p.descripcion;
+      if (!prodMap[k]) prodMap[k] = { descripcion: p.descripcion || k, veces: 0, unidades: 0, monto: 0 };
+      prodMap[k].veces++;
+      prodMap[k].unidades += (p.cantidad || 1);
+      prodMap[k].monto    += (p.subtotal || 0);
+    });
+  });
+  const topProdVeces = Object.values(prodMap).sort((a, b) => b.veces  - a.veces ).slice(0, 8);
+  const topProdMonto = Object.values(prodMap).sort((a, b) => b.monto  - a.monto ).slice(0, 8);
 
-  const filasContactos = [...contactos].reverse().slice(0, 20).map(c => `
-    <tr>
-      <td style="padding:6px 10px;font-size:12px">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago"})}</td>
-      <td style="padding:6px 10px">${escapeHtml(c.nombre)}</td>
-      <td style="padding:6px 10px">+${escapeHtml(c.phone)}</td>
-      <td style="padding:6px 10px">${escapeHtml(c.motivo)}</td>
-    </tr>`).join("");
+  // ── Top clientes por monto ──────────────────────────────────────────────────
+  const clienteMap = {};
+  cotizaciones.forEach(c => {
+    const k = c.rut || c.phone;
+    if (!clienteMap[k]) clienteMap[k] = { nombre: c.razonSocial || c.rut || c.phone, monto: 0, veces: 0 };
+    clienteMap[k].monto += (c.total || 0);
+    clienteMap[k].veces++;
+  });
+  const topClientes = Object.values(clienteMap).sort((a, b) => b.monto - a.monto).slice(0, 10);
 
-  const diasLabels = Object.keys(porDia).sort().map(d => `"${d}"`).join(",");
-  const diasValues = Object.keys(porDia).sort().map(d => porDia[d]).join(",");
+  // ── Helpers de serialización para Chart.js ──────────────────────────────────
+  const j = v => JSON.stringify(v);
 
   const nonce = crypto.randomBytes(16).toString("base64");
   res.setHeader("Content-Security-Policy",
-    `default-src 'none'; script-src 'nonce-${nonce}' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data:; connect-src 'none'`
+    `default-src 'none'; script-src 'nonce-${nonce}' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: https:; connect-src 'none'`
   );
+
   res.send(`<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Reporte CINTEC Bot</title>
-  <style>
-    * { box-sizing:border-box; margin:0; padding:0; }
-    body { font-family:Arial,sans-serif; background:#f0f2f5; color:#333; }
-    .header { background:#c0392b; color:white; padding:20px 32px; }
-    .header h1 { font-size:22px; }
-    .header p  { font-size:13px; opacity:.8; margin-top:4px; }
-    .content { padding:24px 32px; }
-    .cards { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:28px; }
-    .card { background:white; border-radius:10px; padding:20px 24px; flex:1; min-width:160px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
-    .card .label { font-size:12px; color:#888; text-transform:uppercase; letter-spacing:.5px; }
-    .card .value { font-size:28px; font-weight:bold; margin-top:6px; color:#c0392b; }
-    .card .sub   { font-size:12px; color:#aaa; margin-top:4px; }
-    .section { background:white; border-radius:10px; padding:20px 24px; margin-bottom:24px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
-    .section h2 { font-size:15px; color:#555; margin-bottom:16px; border-bottom:1px solid #eee; padding-bottom:10px; }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th { background:#f5f5f5; padding:8px 12px; text-align:left; font-size:12px; color:#777; text-transform:uppercase; }
-    tr:hover td { background:#fafafa; }
-    canvas { max-height:200px; }
-  </style>
-  <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel CINTEC · Bot WhatsApp</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#F1F5F9;color:#1E293B;min-height:100vh}
+
+/* ── Header ── */
+.hdr{background:linear-gradient(135deg,#8B0008 0%,#ED0914 60%,#FF4444 100%);color:#fff;padding:20px 32px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 12px rgba(0,0,0,.25)}
+.hdr-left{display:flex;align-items:center;gap:14px}
+.hdr-logo{font-size:28px;font-weight:900;letter-spacing:-1px;color:#fff}
+.hdr-logo span{opacity:.6;font-weight:300}
+.hdr-title{font-size:15px;font-weight:600;opacity:.9}
+.hdr-sub{font-size:11px;opacity:.65;margin-top:2px}
+.hdr-right{text-align:right;font-size:11px;opacity:.7;line-height:1.6}
+.badge-live{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.2);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600}
+.dot-live{width:7px;height:7px;background:#4ADE80;border-radius:50%;animation:pulse 1.8s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── Layout ── */
+.wrap{padding:24px 32px;max-width:1400px;margin:0 auto}
+.row{display:grid;gap:18px;margin-bottom:18px}
+.row-6{grid-template-columns:repeat(6,1fr)}
+.row-2{grid-template-columns:1fr 1fr}
+.row-3{grid-template-columns:2fr 1fr 1fr}
+.row-1{grid-template-columns:1fr}
+@media(max-width:1100px){.row-6{grid-template-columns:repeat(3,1fr)}.row-2,.row-3{grid-template-columns:1fr}}
+
+/* ── KPI Card ── */
+.kpi{background:#fff;border-radius:14px;padding:18px 20px;box-shadow:0 1px 6px rgba(0,0,0,.07);border-top:3px solid transparent;transition:transform .15s}
+.kpi:hover{transform:translateY(-2px)}
+.kpi.red{border-color:#ED0914}
+.kpi.green{border-color:#22C55E}
+.kpi.blue{border-color:#3B82F6}
+.kpi.purple{border-color:#A855F7}
+.kpi.orange{border-color:#F97316}
+.kpi.teal{border-color:#14B8A6}
+.kpi-icon{font-size:22px;margin-bottom:6px}
+.kpi-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#94A3B8}
+.kpi-value{font-size:26px;font-weight:800;color:#1E293B;margin:4px 0 2px;line-height:1}
+.kpi-sub{font-size:11px;color:#94A3B8}
+.kpi-sub b{color:#22C55E}
+
+/* ── Panel ── */
+.panel{background:#fff;border-radius:14px;padding:20px 22px;box-shadow:0 1px 6px rgba(0,0,0,.07)}
+.panel-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #F1F5F9}
+.panel-title{font-size:13px;font-weight:700;color:#374151;display:flex;align-items:center;gap:7px}
+.panel-pill{font-size:10px;background:#FEF2F2;color:#ED0914;border-radius:20px;padding:2px 9px;font-weight:700}
+.chart-wrap{position:relative;height:200px}
+.chart-wrap-sm{position:relative;height:170px}
+
+/* ── Tabla ── */
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+thead th{background:#F8FAFC;padding:8px 12px;text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#94A3B8;border-bottom:1px solid #E2E8F0}
+tbody td{padding:9px 12px;border-bottom:1px solid #F1F5F9;color:#374151}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:#FAFAFA}
+.tag{display:inline-block;border-radius:20px;padding:2px 8px;font-size:10px;font-weight:700}
+.tag-new{background:#DCFCE7;color:#15803D}
+.tag-rec{background:#DBEAFE;color:#1D4ED8}
+.tag-loop{background:#FEF9C3;color:#92400E}
+.tag-sin{background:#FEE2E2;color:#991B1B}
+.rank{width:22px;height:22px;border-radius:50%;background:#F1F5F9;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#64748B}
+.rank.top{background:#FEF2F2;color:#ED0914}
+
+/* ── Vacío ── */
+.empty{text-align:center;padding:32px;color:#CBD5E1;font-size:13px}
+
+/* ── Footer ── */
+.footer{text-align:center;padding:24px;font-size:11px;color:#CBD5E1}
+</style>
+<script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <div class="header">
-    <h1>📊 Reporte CINTEC Bot</h1>
-    <p>Generado el ${new Date().toLocaleString("es-CL",{timeZone:"America/Santiago"})}</p>
+
+<div class="hdr">
+  <div class="hdr-left">
+    <img src="https://assets.jumpseller.com/store/cintecsa/themes/954643/settings/e6f636bc6ca9fb2e0341/logo%20cintec%20color_.png?1771944795"
+         style="height:36px;filter:brightness(0) invert(1)" alt="CINTEC" onerror="this.style.display='none'">
+    <div>
+      <div class="hdr-title">Panel de Control · Bot WhatsApp</div>
+      <div class="hdr-sub">Automatización de cotizaciones CINTEC</div>
+    </div>
   </div>
-  <div class="content">
-    <div class="cards">
-      <div class="card">
-        <div class="label">Total cotizaciones</div>
-        <div class="value">${cotizaciones.length}</div>
-      </div>
-      <div class="card">
-        <div class="label">Clientes nuevos</div>
-        <div class="value" style="color:#27ae60">${nuevos}</div>
-        <div class="sub">${cotizaciones.length ? Math.round(nuevos / cotizaciones.length * 100) : 0}% del total</div>
-      </div>
-      <div class="card">
-        <div class="label">Clientes existentes</div>
-        <div class="value" style="color:#2980b9">${existentes}</div>
-        <div class="sub">${cotizaciones.length ? Math.round(existentes / cotizaciones.length * 100) : 0}% del total</div>
-      </div>
-      <div class="card">
-        <div class="label">Monto total cotizado</div>
-        <div class="value" style="font-size:20px">$${totalMonto.toLocaleString("es-CL")}</div>
-      </div>
-      <div class="card">
-        <div class="label">Solicitudes de contacto</div>
-        <div class="value" style="color:#8e44ad">${contactos.length}</div>
-      </div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <span class="badge-live"><span class="dot-live"></span>En vivo</span>
+    <div class="hdr-right">
+      Actualizado<br>${new Date().toLocaleString("es-CL",{timeZone:"America/Santiago"})}<br>
+      <a href="?" style="color:rgba(255,255,255,.7);font-size:10px;text-decoration:none">↻ Actualizar</a>
     </div>
+  </div>
+</div>
 
-    ${Object.keys(porDia).length > 0 ? `
-    <div class="section">
-      <h2>📈 Cotizaciones por día (últimos 30 días)</h2>
-      <canvas id="chart"></canvas>
-    </div>` : ""}
+<div class="wrap">
 
-    <div class="section">
-      <h2>🏆 Top productos más cotizados</h2>
-      ${topProductos.length === 0 ? "<p style='color:#aaa;font-size:13px'>Sin datos aún.</p>" : `
-      <table>
-        <tr><th>#</th><th>Producto</th><th style="text-align:center">Veces cotizado</th><th style="text-align:center">Unidades total</th></tr>
-        ${filasProductos}
-      </table>`}
+  <!-- ── Fila 1: KPIs ── -->
+  <div class="row row-6">
+    <div class="kpi red">
+      <div class="kpi-icon">📋</div>
+      <div class="kpi-label">Total cotizaciones</div>
+      <div class="kpi-value">${cotizaciones.length}</div>
+      <div class="kpi-sub"><b>${cot7d}</b> últimos 7 días</div>
     </div>
-
-    <div class="section">
-      <h2>📋 Últimas cotizaciones</h2>
-      ${cotizaciones.length === 0 ? "<p style='color:#aaa;font-size:13px'>Sin cotizaciones registradas.</p>" : `
-      <table>
-        <tr><th>Fecha</th><th>Cliente</th><th>Tipo</th><th style="text-align:right">Total</th><th>Email</th></tr>
-        ${filasRecientes}
-      </table>`}
+    <div class="kpi green">
+      <div class="kpi-icon">💵</div>
+      <div class="kpi-label">Monto total cotizado</div>
+      <div class="kpi-value" style="font-size:18px">$${totalMonto.toLocaleString("es-CL")}</div>
+      <div class="kpi-sub"><b>$${monto7d.toLocaleString("es-CL")}</b> últ. 7 días</div>
     </div>
-
-    <div class="section">
-      <h2>📞 Solicitudes de contacto con ejecutivo</h2>
-      ${contactos.length === 0 ? "<p style='color:#aaa;font-size:13px'>Sin solicitudes registradas.</p>" : `
-      <table>
-        <tr><th>Fecha</th><th>Nombre</th><th>WhatsApp</th><th>Motivo</th></tr>
-        ${filasContactos}
-      </table>`}
+    <div class="kpi blue">
+      <div class="kpi-icon">🎯</div>
+      <div class="kpi-label">Ticket promedio</div>
+      <div class="kpi-value" style="font-size:20px">$${ticketProm.toLocaleString("es-CL")}</div>
+      <div class="kpi-sub">por cotización</div>
     </div>
-
-    <div class="section">
-      <h2>⚠️ Conversaciones problemáticas (últimas 20)</h2>
-      <p style="color:#888;font-size:12px;margin-top:-8px">Loop = cliente no entendió 2+ veces seguidas | Sin respuesta = pregunta fuera del alcance del bot</p>
-      ${problematicas.length === 0 ? "<p style='color:#aaa;font-size:13px'>Sin conversaciones problemáticas registradas.</p>" : `
-      <table>
-        <tr><th>Fecha</th><th>Tipo</th><th>Cliente</th><th>Step</th><th>Últimos mensajes del cliente</th><th>Pregunta sin respuesta</th></tr>
-        ${[...problematicas].reverse().slice(0, 20).map(p => `
-        <tr>
-          <td style="padding:6px 10px;font-size:12px">${new Date(p.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago"})}</td>
-          <td style="padding:6px 10px;text-align:center">${p.tipo === "loop" ? "🔄 Loop" : "❓ Sin respuesta"}</td>
-          <td style="padding:6px 10px">${escapeHtml(p.cliente || "–")}</td>
-          <td style="padding:6px 10px;font-size:11px;color:#888">${escapeHtml(p.step || "–")}</td>
-          <td style="padding:6px 10px;font-size:12px;max-width:240px">${(p.mensajesRecientes || []).map(m => escapeHtml(m.text)).join(" → ")}</td>
-          <td style="padding:6px 10px;font-size:12px;max-width:200px;color:#c0392b">${escapeHtml(p.pregunta || "–")}</td>
-        </tr>`).join("")}
-      </table>`}
+    <div class="kpi teal">
+      <div class="kpi-icon">👥</div>
+      <div class="kpi-label">Clientes únicos</div>
+      <div class="kpi-value">${clientesUnicos}</div>
+      <div class="kpi-sub">${nuevos} nuevos · ${existentes} recurrentes</div>
+    </div>
+    <div class="kpi purple">
+      <div class="kpi-icon">📞</div>
+      <div class="kpi-label">Solicitudes ejecutivo</div>
+      <div class="kpi-value">${contactos.length}</div>
+      <div class="kpi-sub">derivadas a ventas</div>
+    </div>
+    <div class="kpi orange">
+      <div class="kpi-icon">⚠️</div>
+      <div class="kpi-label">Conv. problemáticas</div>
+      <div class="kpi-value">${problematicas.length}</div>
+      <div class="kpi-sub">loops + sin respuesta</div>
     </div>
   </div>
 
-  ${Object.keys(porDia).length > 0 ? `
-  <script nonce="${nonce}">
-    new Chart(document.getElementById("chart"), {
-      type: "bar",
-      data: {
-        labels: [${diasLabels}],
-        datasets: [{ label: "Cotizaciones", data: [${diasValues}],
-          backgroundColor: "rgba(192,57,43,.7)", borderRadius: 4 }]
-      },
-      options: { plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 } } } }
-    });
-  </script>` : ""}
+  <!-- ── Fila 2: Gráfico diario + Dona ── -->
+  <div class="row row-2">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div class="panel-title">📈 Cotizaciones por día <span class="panel-pill">30 días</span></div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="chartDia"></canvas>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-hdr">
+        <div class="panel-title">🥧 Nuevos vs Recurrentes</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="chartDona"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Fila 3: Por hora + Top productos por monto ── -->
+  <div class="row row-2">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div class="panel-title">🕐 Actividad por hora del día</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="chartHora"></canvas>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-hdr">
+        <div class="panel-title">💰 Top productos por monto cotizado</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="chartMonto"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Fila 4: Top clientes + Top productos por frecuencia ── -->
+  <div class="row row-2">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div class="panel-title">🏆 Top clientes por monto</div>
+      </div>
+      ${topClientes.length === 0 ? `<div class="empty">Sin datos aún</div>` : `
+      <table>
+        <thead><tr><th>#</th><th>Cliente</th><th style="text-align:right">Monto total</th><th style="text-align:center">Cotizaciones</th></tr></thead>
+        <tbody>
+        ${topClientes.map((c, i) => `
+          <tr>
+            <td><span class="rank${i < 3 ? " top" : ""}">${i + 1}</span></td>
+            <td style="font-weight:600">${escapeHtml(c.nombre)}</td>
+            <td style="text-align:right;font-weight:700;color:#ED0914">$${c.monto.toLocaleString("es-CL")}</td>
+            <td style="text-align:center;color:#94A3B8">${c.veces}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </div>
+    <div class="panel">
+      <div class="panel-hdr">
+        <div class="panel-title">📦 Top productos por frecuencia</div>
+      </div>
+      ${topProdVeces.length === 0 ? `<div class="empty">Sin datos aún</div>` : `
+      <table>
+        <thead><tr><th>#</th><th>Producto</th><th style="text-align:center">Veces</th><th style="text-align:center">Unidades</th></tr></thead>
+        <tbody>
+        ${topProdVeces.map((p, i) => `
+          <tr>
+            <td><span class="rank${i < 3 ? " top" : ""}">${i + 1}</span></td>
+            <td>${escapeHtml(p.descripcion)}</td>
+            <td style="text-align:center;font-weight:700">${p.veces}</td>
+            <td style="text-align:center;color:#94A3B8">${p.unidades}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </div>
+  </div>
+
+  <!-- ── Fila 5: Últimas cotizaciones ── -->
+  <div class="row row-1">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div class="panel-title">📋 Últimas cotizaciones <span class="panel-pill">20 más recientes</span></div>
+      </div>
+      ${cotizaciones.length === 0 ? `<div class="empty">Sin cotizaciones registradas aún</div>` : `
+      <table>
+        <thead><tr><th>Fecha</th><th>Cliente</th><th>RUT</th><th>Tipo</th><th style="text-align:right">Total</th><th>Email</th></tr></thead>
+        <tbody>
+        ${[...cotizaciones].reverse().slice(0, 20).map(c => `
+          <tr>
+            <td style="color:#94A3B8;white-space:nowrap">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</td>
+            <td style="font-weight:600">${escapeHtml(c.razonSocial || "–")}</td>
+            <td style="color:#94A3B8">${escapeHtml(c.rut || "–")}</td>
+            <td><span class="tag ${c.esClienteNuevo ? "tag-new" : "tag-rec"}">${c.esClienteNuevo ? "Nuevo" : "Recurrente"}</span></td>
+            <td style="text-align:right;font-weight:700;color:#ED0914">$${(c.total || 0).toLocaleString("es-CL")}</td>
+            <td style="color:#94A3B8">${escapeHtml(c.emailCliente || "–")}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </div>
+  </div>
+
+  <!-- ── Fila 6: Contactos + Problemáticas ── -->
+  <div class="row row-2">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div class="panel-title">📞 Solicitudes a ejecutivo</div>
+      </div>
+      ${contactos.length === 0 ? `<div class="empty">Sin solicitudes registradas</div>` : `
+      <table>
+        <thead><tr><th>Fecha</th><th>Nombre</th><th>WhatsApp</th><th>Motivo</th></tr></thead>
+        <tbody>
+        ${[...contactos].reverse().slice(0, 15).map(c => `
+          <tr>
+            <td style="color:#94A3B8;white-space:nowrap">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</td>
+            <td style="font-weight:600">${escapeHtml(c.nombre || "–")}</td>
+            <td style="color:#94A3B8">+${escapeHtml(c.phone)}</td>
+            <td>${escapeHtml(c.motivo || "–")}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </div>
+    <div class="panel">
+      <div class="panel-hdr">
+        <div class="panel-title">⚠️ Conversaciones problemáticas</div>
+      </div>
+      ${problematicas.length === 0 ? `<div class="empty">Sin conversaciones problemáticas</div>` : `
+      <table>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Cliente</th><th>Últimos mensajes</th></tr></thead>
+        <tbody>
+        ${[...problematicas].reverse().slice(0, 15).map(p => `
+          <tr>
+            <td style="color:#94A3B8;white-space:nowrap">${new Date(p.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</td>
+            <td><span class="tag ${p.tipo === "loop" ? "tag-loop" : "tag-sin"}">${p.tipo === "loop" ? "Loop" : "Sin resp."}</span></td>
+            <td style="font-weight:600">${escapeHtml(p.cliente || "–")}</td>
+            <td style="color:#94A3B8;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(p.mensajesRecientes || []).map(m => escapeHtml(m.text)).join(" → ")}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </div>
+  </div>
+
+</div>
+<div class="footer">CINTEC · Bot WhatsApp · Panel interno · ${new Date().getFullYear()}</div>
+
+<script nonce="${nonce}">
+const RED = '#ED0914', RED2 = 'rgba(237,9,20,.15)';
+const BLUE = '#3B82F6', GREEN = '#22C55E', PURPLE = '#A855F7';
+const GRAY = '#94A3B8';
+const defaults = { plugins:{ legend:{ display:false } }, animation:{ duration:600 } };
+
+// Gráfico por día
+new Chart(document.getElementById('chartDia'), {
+  type:'bar',
+  data:{
+    labels:${j(diasOrdenados.map(d => d.slice(5)))},
+    datasets:[{ label:'Cotizaciones', data:${j(diasOrdenados.map(d => porDia[d]))},
+      backgroundColor:RED2, borderColor:RED, borderWidth:2, borderRadius:5 }]
+  },
+  options:{ ...defaults, scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 }, grid:{ color:'#F1F5F9' } }, x:{ grid:{ display:false }, ticks:{ font:{ size:10 } } } } }
+});
+
+// Dona nuevos vs recurrentes
+new Chart(document.getElementById('chartDona'), {
+  type:'doughnut',
+  data:{
+    labels:['Nuevos','Recurrentes'],
+    datasets:[{ data:[${nuevos},${existentes}],
+      backgroundColor:[GREEN,'#DBEAFE'], borderColor:['#fff','#fff'], borderWidth:3,
+      hoverOffset:6 }]
+  },
+  options:{ ...defaults, cutout:'68%', plugins:{ legend:{ display:true, position:'bottom', labels:{ font:{ size:11 }, padding:14 } } } }
+});
+
+// Gráfico por hora
+new Chart(document.getElementById('chartHora'), {
+  type:'bar',
+  data:{
+    labels:${j(Array.from({length:24}, (_,i) => i+'h'))},
+    datasets:[{ data:${j(porHora)},
+      backgroundColor:porHora.map(v => v === Math.max(...${j(porHora)}) ? RED : 'rgba(237,9,20,.25)'),
+      borderRadius:4 }]
+  },
+  options:{ ...defaults, scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 }, grid:{ color:'#F1F5F9' } }, x:{ grid:{ display:false }, ticks:{ font:{ size:9 } } } } }
+});
+
+// Top productos por monto (horizontal)
+new Chart(document.getElementById('chartMonto'), {
+  type:'bar',
+  data:{
+    labels:${j(topProdMonto.map(p => p.descripcion.slice(0,28)))},
+    datasets:[{ data:${j(topProdMonto.map(p => p.monto))},
+      backgroundColor:'rgba(59,130,246,.2)', borderColor:BLUE, borderWidth:2, borderRadius:4 }]
+  },
+  options:{ ...defaults, indexAxis:'y', scales:{ x:{ beginAtZero:true, grid:{ color:'#F1F5F9' }, ticks:{ callback:v=>'$'+v.toLocaleString('es-CL') } }, y:{ grid:{ display:false }, ticks:{ font:{ size:10 } } } } }
+});
+</script>
 </body>
 </html>`);
 });
