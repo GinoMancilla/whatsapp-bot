@@ -83,6 +83,7 @@ function guardarLog() {
 }
 
 function registrarCotizacion(phone, data) {
+  if (TEST_PHONES.has(phone)) return;
   cotizacionesLog.push({
     id:            `COT-${Date.now()}`,
     tipo:          "cotizacion",
@@ -108,6 +109,7 @@ function registrarCotizacion(phone, data) {
 }
 
 function registrarContacto(phone, nombre, motivo) {
+  if (TEST_PHONES.has(phone)) return;
   cotizacionesLog.push({
     id:        `CTT-${Date.now()}`,
     tipo:      "contacto",
@@ -120,6 +122,7 @@ function registrarContacto(phone, nombre, motivo) {
 }
 
 function registrarConversacionProblematica(phone, session, tipo, extra = {}) {
+  if (TEST_PHONES.has(phone)) return;
   cotizacionesLog.push({
     id:               `PROB-${Date.now()}`,
     tipo,
@@ -207,6 +210,7 @@ function checkRateLimit(phone) {
 
 // ─── Anti-frustración: handoff automático tras 2 errores consecutivos ─────────
 async function registrarError(phone, session) {
+  if (TEST_PHONES.has(phone)) return;
   session.data.erroresConsecutivos = (session.data.erroresConsecutivos || 0) + 1;
   if (session.data.erroresConsecutivos >= 2) {
     session.data.erroresConsecutivos = 0;
