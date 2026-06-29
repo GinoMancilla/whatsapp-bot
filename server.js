@@ -1962,10 +1962,6 @@ function buildKPIPage(nonce, showLogout = false) {
   const contactos     = cotizacionesLog.filter(e => e.tipo === "contacto");
   const problematicas = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
 
-  const cotizaciones  = cotizacionesLog.filter(e => e.tipo === "cotizacion");
-  const contactos     = cotizacionesLog.filter(e => e.tipo === "contacto");
-  const problematicas = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
-
   // ── KPIs principales ────────────────────────────────────────────────────────
   const nuevos      = cotizaciones.filter(c => c.esClienteNuevo).length;
   const existentes  = cotizaciones.filter(c => !c.esClienteNuevo).length;
@@ -2019,15 +2015,9 @@ function buildKPIPage(nonce, showLogout = false) {
   });
   const topClientes = Object.values(clienteMap).sort((a, b) => b.monto - a.monto).slice(0, 10);
 
-  // ── Helpers de serialización para Chart.js ──────────────────────────────────
   const j = v => JSON.stringify(v);
 
-  const nonce = crypto.randomBytes(16).toString("base64");
-  res.setHeader("Content-Security-Policy",
-    `default-src 'none'; script-src 'nonce-${nonce}' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: https:; connect-src 'none'`
-  );
-
-  res.send(`<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
