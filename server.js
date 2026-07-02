@@ -58,6 +58,24 @@ const sessions = {};
 const hidroPendientes  = new Map(); // phone → respuesta del especialista (fallback si sesión expiró)
 const hidroSolicitudes = new Map(); // phone → { sentAt, data, reminderCount } — para recordatorios
 
+// ─── Datos bancarios CINTEC (formas de pago) ─────────────────────────────────
+const DATOS_BANCARIOS_WSP =
+  `🏦 *Datos para transferencia:*\n\n` +
+  `*Sociedad Comercial Cintec Limitada*\n` +
+  `RUT: 77.338.250-6\n\n` +
+  `🔹 Banco Santander\nCta. Corriente N° 36989-6\n\n` +
+  `🔹 Banco BCI\nCta. Corriente N° 60310332\n\n` +
+  `📧 Email: caja@cintecsa.cl`;
+
+const DATOS_BANCARIOS_HTML = `
+  <div style="background:#f8f8f8; border:1px solid #e0e0e0; border-radius:8px; padding:16px; margin-top:16px;">
+    <h3 style="color:#c0392b; margin:0 0 10px;">💳 Datos bancarios para transferencia</h3>
+    <p style="margin:4px 0;"><strong>Sociedad Comercial Cintec Limitada</strong> — RUT 77.338.250-6</p>
+    <p style="margin:4px 0;">Banco Santander — Cta. Corriente N° 36989-6</p>
+    <p style="margin:4px 0;">Banco BCI — Cta. Corriente N° 60310332</p>
+    <p style="margin:4px 0;">Enviar comprobante a <a href="mailto:caja@cintecsa.cl">caja@cintecsa.cl</a> o por WhatsApp</p>
+  </div>`;
+
 // ─── Instancias globales (evitar recrear en cada llamada) ─────────────────────
 const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 const anthropicClient = process.env.ANTHROPIC_API_KEY
@@ -94,6 +112,7 @@ function registrarCotizacion(phone, data) {
     razonSocial:   data.razonSocial || "",
     esClienteNuevo: !!data.esClienteNuevo,
     emailCliente:  data.emailCliente || "",
+    direccionEntrega: data.direccionEntrega || "",
     productos:     (data.productosConfirmados || []).map(item => ({
       codigo:      item.seleccionado?.CodProd || "",
       descripcion: item.seleccionado?.DesProd || "",
@@ -134,6 +153,23 @@ function registrarConversacionProblematica(phone, session, tipo, extra = {}) {
     rut:              session.data.rut || "",
     mensajesRecientes: [...(session.data.mensajesRecientes || [])],
     ...extra,
+  });
+  guardarLog();
+}
+
+function registrarComprobante(phone, info) {
+  if (TEST_PHONES.has(phone)) return;
+  cotizacionesLog.push({
+    id:          `PAGO-${Date.now()}`,
+    tipo:        "comprobante",
+    timestamp:   new Date().toISOString(),
+    phone,
+    razonSocial: info.razonSocial || "",
+    rut:         info.rut || "",
+    archivo:     info.filename || "",
+    mimeType:    info.mimeType || "",
+    cotizacionId: info.cotizacionId || "",
+    totalCotizacion: info.totalCotizacion || 0,
   });
   guardarLog();
 }
@@ -270,6 +306,7 @@ const STEPS = {
   ELIGIENDO_OPCION:   "eligiendo_opcion",
   WAITING_CANTIDAD:   "waiting_cantidad",
   WAITING_MAS:        "waiting_mas",
+  WAITING_ENTREGA:    "waiting_entrega",
   WAITING_EMAIL:      "waiting_email",
   HIDRO_SPECS:        "hidro_specs",
   HIDRO_ESPERANDO:    "hidro_esperando",
@@ -398,6 +435,12 @@ app.post("/webhook", async (req, res) => {
     if (processedMsgIds.has(msg.id)) return;
     processedMsgIds.add(msg.id);
     const from = msg.from;
+    // Comprobantes de pago: el cliente envía una imagen o documento (PDF)
+    if (msg.type === "image" || msg.type === "document") {
+      if (!checkRateLimit(from)) return;
+      await manejarComprobante(from, msg);
+      return;
+    }
     const text = msg.text?.body?.trim();
     if (!text) return;
     // Dedup secundario: mismo texto del mismo teléfono en <5 s (Meta puede enviar distinto msg.id)
@@ -606,6 +649,16 @@ async function handleMessage(phone, text) {
 
     case STEPS.WAITING_MAS:
       await manejarMasProductos(phone, session, text);
+      break;
+
+    case STEPS.WAITING_ENTREGA:
+      if (text.length < 5) {
+        await sendMessage(phone, `⚠️ Ingresa una dirección de entrega válida (calle, comuna y ciudad).`);
+        break;
+      }
+      session.data.direccionEntrega = text;
+      session.step = STEPS.WAITING_EMAIL;
+      await sendMessage(phone, `📧 ¿A qué *correo electrónico* enviamos la cotización?`);
       break;
 
     case STEPS.WAITING_EMAIL:
@@ -1254,8 +1307,8 @@ async function mostrarResumenFinal(phone, session) {
     msg += `ℹ️ No encontrado en catálogo: ${noEncontrados.join(", ")}\nUn representante revisará disponibilidad.\n\n`;
   }
 
-  msg += `📧 ¿A qué *correo electrónico* enviamos la cotización?`;
-  session.step = STEPS.WAITING_EMAIL;
+  msg += `📦 ¿Cuál es la *dirección de entrega*? (calle, comuna y ciudad)`;
+  session.step = STEPS.WAITING_ENTREGA;
   await sendMessage(phone, msg);
 }
 
@@ -1509,6 +1562,8 @@ async function enviarCotizacionCompleta(phone, data) {
               <td>💳 <strong>Condición de pago:</strong> ${data.esClienteNuevo ? "Contado" : "30 días"}</td>
             </tr>
           </table>
+          ${data.direccionEntrega ? `<p style="font-size:13px; color:#444; margin-top:10px;">📦 <strong>Lugar de entrega:</strong> ${escapeHtml(data.direccionEntrega)}</p>` : ""}
+          ${DATOS_BANCARIOS_HTML}
         </div>
       </div>`;
 
@@ -1535,10 +1590,80 @@ async function enviarCotizacionCompleta(phone, data) {
       `✅ ¡Listo! Tu cotización fue enviada a *${data.emailCliente}*.\n\n` +
       `¡Gracias por preferirnos! Escribe *hola* si necesitas algo más. 🙏`
     );
+    await sendMessage(phone,
+      `💳 *Formas de pago:*\n\n` +
+      `1️⃣ Transferencia bancaria\n` +
+      `2️⃣ Pago contra factura (clientes con crédito aprobado)\n\n` +
+      DATOS_BANCARIOS_WSP + `\n\n` +
+      `Cuando realices el pago, *envía el comprobante por este mismo chat* 📎 y nuestro equipo lo validará.`
+    );
     console.log(`📧 Cotización enviada a ${data.emailCliente}`);
   } catch (err) {
     console.error("Error enviando cotización:", err.message);
     await sendMessage(phone, `⚠️ Error al enviar cotización. Por favor intenta nuevamente.`);
+  }
+}
+
+// ─── Comprobante de pago (imagen/documento por WhatsApp) ─────────────────────
+async function manejarComprobante(phone, msg) {
+  try {
+    const media   = msg.type === "image" ? msg.image : msg.document;
+    const mediaId = media?.id;
+    if (!mediaId) return;
+    const mimeType = media.mime_type || "application/octet-stream";
+    const ext      = mimeType.includes("pdf") ? "pdf" : (mimeType.split("/")[1] || "jpg");
+    const filename = media.filename || `comprobante-${Date.now()}.${ext}`;
+
+    // 1. Meta entrega una URL temporal del archivo a partir del media ID
+    const meta = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    });
+    // 2. Descargar el binario (la URL requiere el mismo token)
+    const file = await axios.get(meta.data.url, {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+      responseType: "arraybuffer",
+      maxContentLength: 15 * 1024 * 1024,
+    });
+
+    // Contexto del cliente: sesión activa o su última cotización registrada
+    const session   = sessions[phone];
+    const ultimaCot = [...cotizacionesLog].reverse().find(e => e.tipo === "cotizacion" && e.phone === phone);
+    const razonSocial = session?.data?.razonSocial || ultimaCot?.razonSocial || "";
+    const rut         = session?.data?.rut         || ultimaCot?.rut         || "";
+
+    // 3. Reenviar a caja/ejecutivo con el archivo adjunto
+    if (resendClient) {
+      const fecha = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+      await resendClient.emails.send({
+        from:    "Bot CINTEC <onboarding@resend.dev>",
+        to:      DESTINATION_EMAIL,
+        subject: `💰 Comprobante de pago recibido — ${razonSocial || "+" + phone}`,
+        html: `<h2 style="color:#c0392b;">💰 Comprobante de pago recibido vía WhatsApp</h2>
+          <p><strong>Fecha:</strong> ${fecha}</p>
+          <p><strong>Cliente:</strong> ${escapeHtml(razonSocial || "–")} | RUT: ${escapeHtml(rut || "–")}</p>
+          <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
+          ${ultimaCot ? `<p><strong>Última cotización:</strong> ${escapeHtml(ultimaCot.id)} por $${(ultimaCot.total || 0).toLocaleString("es-CL")} (${new Date(ultimaCot.timestamp).toLocaleString("es-CL", { timeZone: "America/Santiago" })})</p>` : `<p><em>Sin cotización previa registrada para este número.</em></p>`}
+          <p>El comprobante viene adjunto. Validar el pago y confirmar al cliente.</p>`,
+        attachments: [{ filename, content: Buffer.from(file.data).toString("base64") }],
+      });
+    }
+
+    registrarComprobante(phone, {
+      razonSocial, rut, filename, mimeType,
+      cotizacionId:    ultimaCot?.id    || "",
+      totalCotizacion: ultimaCot?.total || 0,
+    });
+    await sendMessage(phone,
+      `✅ *Recibimos tu comprobante de pago.*\n\n` +
+      `Nuestro equipo validará la transferencia y te confirmaremos a la brevedad por este medio. 🙏`
+    );
+    console.log(`💰 Comprobante recibido de +${phone} (${filename})`);
+  } catch (err) {
+    console.error("Error procesando comprobante:", err.response?.data || err.message);
+    await sendMessage(phone,
+      `⚠️ No pudimos procesar el archivo. Intenta enviarlo nuevamente ` +
+      `o mándalo por correo a *caja@cintecsa.cl*.`
+    );
   }
 }
 
@@ -2054,6 +2179,7 @@ function buildKPIPage(nonce, showLogout = false) {
   const cotizaciones  = cotizacionesLog.filter(e => e.tipo === "cotizacion");
   const contactos     = cotizacionesLog.filter(e => e.tipo === "contacto");
   const problematicas = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
+  const comprobantes  = cotizacionesLog.filter(e => e.tipo === "comprobante");
   const hidroPendientesList = [...hidroSolicitudes.entries()]
     .map(([phone, entry]) => ({
       phone,
@@ -2390,6 +2516,30 @@ tbody tr:hover td{background:#FAFAFA}
       </table>
     </div>
   </div>`}
+
+  <!-- ── Comprobantes de pago ── -->
+  <div class="row row-1">
+    <div class="panel" style="grid-column:1/-1">
+      <div class="panel-hdr">
+        <div class="panel-title">💰 Comprobantes de pago recibidos${comprobantes.length > 0 ? ` <span style="background:#22C55E;color:#000;padding:2px 10px;border-radius:12px;font-size:12px;margin-left:8px;font-weight:700">${comprobantes.length}</span>` : ""}</div>
+      </div>
+      ${comprobantes.length === 0 ? `<div class="empty">Sin comprobantes recibidos</div>` : `
+      <table>
+        <thead><tr><th>Fecha</th><th>Cliente</th><th>RUT</th><th>WhatsApp</th><th>Archivo</th><th>Cotización asociada</th></tr></thead>
+        <tbody>
+        ${[...comprobantes].reverse().slice(0, 15).map(c => `
+          <tr>
+            <td style="color:#94A3B8;white-space:nowrap">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</td>
+            <td style="font-weight:600">${escapeHtml(c.razonSocial || "–")}</td>
+            <td style="color:#94A3B8">${escapeHtml(c.rut || "–")}</td>
+            <td style="color:#94A3B8">+${escapeHtml(c.phone)}</td>
+            <td style="font-size:11px">${escapeHtml(c.archivo || "–")}</td>
+            <td>${c.cotizacionId ? `${escapeHtml(c.cotizacionId)} · $${(c.totalCotizacion || 0).toLocaleString("es-CL")}` : "–"}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </div>
+  </div>
 
   <!-- ── Fila 6: Contactos + Problemáticas ── -->
   <div class="row row-2">
