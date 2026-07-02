@@ -55,7 +55,8 @@ function verificarFirmaMeta(req) {
 }
 
 const sessions = {};
-const hidroPendientes = new Map(); // phone → respuesta del especialista (fallback si sesión expiró)
+const hidroPendientes  = new Map(); // phone → respuesta del especialista (fallback si sesión expiró)
+const hidroSolicitudes = new Map(); // phone → { sentAt, data, reminderCount } — para recordatorios
 
 // ─── Instancias globales (evitar recrear en cada llamada) ─────────────────────
 const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
@@ -162,6 +163,35 @@ setInterval(() => {
     }
   }
 }, 5 * 60 * 1000);
+
+// ─── Recordatorios automáticos de solicitudes hidro sin respuesta ─────────────
+const HIDRO_REMIND_AFTER  = 2 * 60 * 60 * 1000; // reenviar al técnico tras 2h
+const HIDRO_NOTIFY_CLIENT = 4 * 60 * 60 * 1000; // avisar al cliente tras 4h
+
+setInterval(async () => {
+  const now = Date.now();
+  for (const [phone, entry] of hidroSolicitudes) {
+    const elapsed = now - entry.sentAt;
+    try {
+      if (entry.reminderCount === 0 && elapsed >= HIDRO_REMIND_AFTER) {
+        await reenviarRecordatorioHidro(phone, entry.data);
+        entry.reminderCount = 1;
+        console.log(`🔔 Recordatorio técnico hidro enviado para ${phone}`);
+      } else if (entry.reminderCount === 1 && elapsed >= HIDRO_NOTIFY_CLIENT) {
+        const s = sessions[phone];
+        if (s?.step === STEPS.HIDRO_ESPERANDO) {
+          await sendMessage(phone,
+            `⏳ Seguimos trabajando en tu cotización de hidrolavadora. Un especialista te responderá a la brevedad.\n` +
+            `Si tienes alguna consulta urgente, escribe *ejecutivo* y te atendemos directamente.`
+          );
+        }
+        entry.reminderCount = 2;
+      }
+    } catch (err) {
+      console.error(`Error en recordatorio hidro ${phone}:`, err.message);
+    }
+  }
+}, 30 * 60 * 1000);
 
 // ─── Rate limiter WhatsApp: ventana deslizante por usuario (máx 12 msg/min) ──
 // Cada usuario tiene su propia ventana de 60s que arranca con su primer mensaje.
@@ -1588,13 +1618,18 @@ const HIDRO_PREGUNTAS = [
 ];
 
 async function iniciarFlujoHidro(phone, session) {
+  const total = session.data.itemsPendientes.filter(i => esHidrolavadora(i.nombre)).length;
+  session.data.hidrosList   = [];
+  session.data.hidrosTotal  = total;
+  session.data.hidrosActual = 1;
   session.data.hidroSpecs   = {};
   session.data.hidroPaso    = 0;
   session.step = STEPS.HIDRO_SPECS;
-  await sendMessage(phone,
-    `🔩 Para cotizar una *hidrolavadora* correctamente, necesito algunas especificaciones técnicas.\n\n` +
-    HIDRO_PREGUNTAS[0].msg
-  );
+
+  const intro = total > 1
+    ? `🔩 Necesito especificaciones para tus *${total} hidrolavadoras*. Empecemos con la *primera:*\n\n`
+    : `🔩 Para cotizar una *hidrolavadora* correctamente, necesito algunas especificaciones técnicas.\n\n`;
+  await sendMessage(phone, intro + HIDRO_PREGUNTAS[0].msg);
 }
 
 async function manejarHidroSpecs(phone, session, text) {
@@ -1615,18 +1650,40 @@ async function manejarHidroSpecs(phone, session, text) {
     session.data.hidroPaso = siguientePaso;
     await sendMessage(phone, HIDRO_PREGUNTAS[siguientePaso].msg);
   } else {
-    // Todas las specs recolectadas
+    // Guardar specs de esta hidro en la lista acumulada
+    const itemActual = session.data.itemsPendientes[0];
+    session.data.hidrosList.push({
+      nombre:   itemActual?.nombre   || `Hidrolavadora ${session.data.hidrosActual}`,
+      cantidad: itemActual?.cantidad || 1,
+      specs: { ...session.data.hidroSpecs },
+    });
     session.data.itemsPendientes.shift();
-    session.step = STEPS.HIDRO_ESPERANDO;
-    await enviarSolicitudHidroEmail(phone, session.data);
-    await sendMessage(phone,
-      `✅ ¡Listo! Hemos registrado todas las especificaciones.\n\n` +
-      `Tu solicitud fue derivada a un *especialista* que buscará la mejor opción en calidad y precio.\n\n` +
-      `Te notificaremos por este medio cuando tengamos la cotización. ⏳`
-    );
-    // Continuar con otros productos pendientes si los hay
-    if (session.data.itemsPendientes.length > 0) {
-      await procesarSiguienteProducto(phone, session);
+
+    // ¿Hay otra hidrolavadora en la cola?
+    const nextItem = session.data.itemsPendientes[0];
+    if (nextItem && esHidrolavadora(nextItem.nombre)) {
+      session.data.hidrosActual++;
+      session.data.hidroSpecs = {};
+      session.data.hidroPaso  = 0;
+      await sendMessage(phone,
+        `✅ Especificaciones de la hidrolavadora *${session.data.hidrosActual - 1}/${session.data.hidrosTotal}* registradas.\n\n` +
+        `Ahora necesito las especificaciones de la *hidrolavadora ${session.data.hidrosActual}:*\n\n` +
+        HIDRO_PREGUNTAS[0].msg
+      );
+    } else {
+      // Todas las hidros procesadas → UN solo email al técnico con todo
+      session.step = STEPS.HIDRO_ESPERANDO;
+      await enviarSolicitudHidroEmail(phone, session.data);
+      hidroSolicitudes.set(phone, { sentAt: Date.now(), data: { ...session.data }, reminderCount: 0 });
+      const n = session.data.hidrosList.length;
+      await sendMessage(phone,
+        `✅ ¡Listo! Registramos las especificaciones ${n > 1 ? `de tus *${n} hidrolavadoras*` : "de tu *hidrolavadora*"}.\n\n` +
+        `Tu solicitud fue derivada a un *especialista* que buscará las mejores opciones.\n\n` +
+        `Te notificaremos por este medio cuando tengamos la cotización. ⏳`
+      );
+      if (session.data.itemsPendientes.length > 0) {
+        await procesarSiguienteProducto(phone, session);
+      }
     }
   }
 }
@@ -1661,45 +1718,71 @@ async function manejarHidroEmail(phone, session, text) {
   setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
 }
 
+function buildHidroEmailHtml(phone, data, esRecordatorio = false) {
+  const fecha    = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+  const hidros   = data.hidrosList?.length ? data.hidrosList
+                   : [{ nombre: "Hidrolavadora", cantidad: 1, specs: data.hidroSpecs || {} }];
+  const baseUrl  = process.env.BASE_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "https://whatsapp-bot-production-8bc1.up.railway.app");
+  const hidrosB64 = Buffer.from(JSON.stringify(hidros)).toString("base64url");
+  const formUrl  = `${baseUrl}/especialista/form?phone=${phone}&nombre=${encodeURIComponent(data.razonSocial)}&token=${SPECIALIST_TOKEN}&hidros=${hidrosB64}`;
+
+  const labelSpecs = { agua:"Tipo de agua", corriente:"Corriente eléctrica", bares:"Presión (bares)",
+    caudal:"Caudal (L/min)", modelo:"Modelo referencia", horas:"Horas de uso/día", uso:"Uso destinado" };
+
+  const tablas = hidros.map((h, i) => {
+    const filas = HIDRO_PREGUNTAS.map(p =>
+      `<tr><td style="padding:6px 12px;font-weight:bold;color:#555;width:40%">${escapeHtml(labelSpecs[p.key] || p.key)}</td>
+       <td style="padding:6px 12px">${escapeHtml(h.specs[p.key] || "–")}</td></tr>`
+    ).join("");
+    return `
+      <h3 style="margin:18px 0 6px;color:#333">
+        ${hidros.length > 1 ? `🔩 Hidrolavadora ${i + 1}/${hidros.length}: ${escapeHtml(h.nombre)}` : "🔩 Especificaciones técnicas"}
+        ${h.cantidad > 1 ? `<span style="font-size:13px;color:#888"> · Cantidad: ${h.cantidad}</span>` : ""}
+      </h3>
+      <table border="1" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:14px">
+        <tr style="background:#f5f5f5"><th style="padding:6px 12px;text-align:left">Especificación</th><th style="padding:6px 12px;text-align:left">Respuesta del cliente</th></tr>
+        ${filas}
+      </table>`;
+  }).join(`<hr style="margin:20px 0;border:none;border-top:1px solid #eee">`);
+
+  const alertaRecordatorio = esRecordatorio
+    ? `<div style="background:#FEF2F2;border-left:4px solid #ED0914;padding:12px 16px;margin-bottom:16px;border-radius:4px">
+         <strong style="color:#ED0914">⏰ Recordatorio:</strong> Esta solicitud lleva más de 2 horas sin respuesta.
+       </div>` : "";
+
+  return {
+    subject: `${esRecordatorio ? "⏰ RECORDATORIO: " : ""}🔩 Solicitud Hidrolavadora${hidros.length > 1 ? ` (${hidros.length} equipos)` : ""} — ${data.razonSocial}`,
+    html: `
+      ${alertaRecordatorio}
+      <h2>🔩 ${esRecordatorio ? "Recordatorio: " : ""}Solicitud de hidrolavadora${hidros.length > 1 ? `s (${hidros.length} equipos)` : ""}</h2>
+      <p><strong>Fecha:</strong> ${fecha}</p>
+      <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${escapeHtml(data.rut || "–")} | WhatsApp: +${escapeHtml(phone)}</p>
+      ${tablas}
+      <br>
+      <p>
+        <a href="${formUrl}" style="background:#ed0914;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block">
+          📩 Responder cotización al cliente
+        </a>
+      </p>
+      <p style="color:#888;font-size:12px">O copia este enlace: ${formUrl}</p>`,
+  };
+}
+
 async function enviarSolicitudHidroEmail(phone, data) {
   if (!resendClient) return;
   try {
-    const resend  = resendClient;
-    const fecha   = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
-    const specs   = data.hidroSpecs || {};
-    const baseUrl = process.env.BASE_URL ||
-      (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "https://whatsapp-bot-production.up.railway.app");
-    const specsB64 = Buffer.from(JSON.stringify(specs)).toString("base64url");
-    const formUrl = `${baseUrl}/especialista/form?phone=${phone}&nombre=${encodeURIComponent(data.razonSocial)}&token=${SPECIALIST_TOKEN}&specs=${specsB64}`;
+    const { subject, html } = buildHidroEmailHtml(phone, data, false);
+    await resendClient.emails.send({ from: "Bot CINTEC <onboarding@resend.dev>", to: DESTINATION_EMAIL, subject, html });
+  } catch (err) { console.error("Error enviando solicitud hidro:", err.message); }
+}
 
-    const filas = HIDRO_PREGUNTAS.map(p =>
-      `<tr><td style="padding:6px 12px;font-weight:bold">${escapeHtml(p.key)}</td><td style="padding:6px 12px">${escapeHtml(specs[p.key] || "-")}</td></tr>`
-    ).join("");
-
-    await resend.emails.send({
-      from:    "Bot CINTEC <onboarding@resend.dev>",
-      to:      DESTINATION_EMAIL,
-      subject: `🔩 Solicitud Hidrolavadora — ${data.razonSocial}`,
-      html: `
-        <h2>🔩 Nueva solicitud de hidrolavadora</h2>
-        <p><strong>Fecha:</strong> ${fecha}</p>
-        <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${escapeHtml(data.rut)} | WhatsApp: +${escapeHtml(phone)}</p>
-        <h3>Especificaciones técnicas</h3>
-        <table border="1" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
-          <tr><th style="padding:6px 12px">Especificación</th><th style="padding:6px 12px">Respuesta</th></tr>
-          ${filas}
-        </table>
-        <br>
-        <p>
-          <a href="${formUrl}" style="background:#ed0914;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold">
-            📩 Responder cotización al cliente
-          </a>
-        </p>
-        <p style="color:#888;font-size:12px">O copia este enlace: ${formUrl}</p>`,
-    });
-  } catch (err) {
-    console.error("Error enviando solicitud hidro:", err.message);
-  }
+async function reenviarRecordatorioHidro(phone, data) {
+  if (!resendClient) return;
+  try {
+    const { subject, html } = buildHidroEmailHtml(phone, data, true);
+    await resendClient.emails.send({ from: "Bot CINTEC <onboarding@resend.dev>", to: DESTINATION_EMAIL, subject, html });
+  } catch (err) { console.error("Error enviando recordatorio hidro:", err.message); }
 }
 
 // ─── Notificar interno ────────────────────────────────────────────────────────
@@ -1763,20 +1846,30 @@ function escapeHtml(str) {
 
 app.get("/especialista/form", (req, res) => {
   if (!checkHttpRateLimit(req.ip, 10)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
-  const { phone, nombre, token, specs: specsB64 } = req.query;
+  const { phone, nombre, token, hidros: hidrosB64, specs: specsB64 } = req.query;
   if (!phone || !token || token !== SPECIALIST_TOKEN) return res.status(401).send("No autorizado.");
 
-  let specs = {};
-  try { if (specsB64) specs = JSON.parse(Buffer.from(specsB64, "base64url").toString()); } catch {}
+  let hidros = [];
+  try {
+    if (hidrosB64) hidros = JSON.parse(Buffer.from(hidrosB64, "base64url").toString());
+    else if (specsB64) hidros = [{ nombre: "Hidrolavadora", cantidad: 1, specs: JSON.parse(Buffer.from(specsB64, "base64url").toString()) }];
+  } catch {}
 
   const labelSpecs = {
-    agua: "Tipo de agua", corriente: "Corriente eléctrica", bares: "Presión requerida",
-    caudal: "Caudal requerido", modelo: "Modelo de referencia", horas: "Horas de uso/día", uso: "Uso destinado"
+    agua:"Tipo de agua", corriente:"Corriente eléctrica", bares:"Presión requerida",
+    caudal:"Caudal requerido", modelo:"Modelo de referencia", horas:"Horas de uso/día", uso:"Uso destinado"
   };
-  const filasSpecs = Object.entries(labelSpecs)
-    .filter(([k]) => specs[k])
-    .map(([k, label]) => `<tr><td class="sl">${escapeHtml(label)}</td><td>${escapeHtml(specs[k])}</td></tr>`)
-    .join("");
+
+  const tablasSpecs = hidros.map((h, i) => {
+    const filas = Object.entries(labelSpecs)
+      .filter(([k]) => h.specs?.[k])
+      .map(([k, label]) => `<tr><td class="sl">${escapeHtml(label)}</td><td>${escapeHtml(h.specs[k])}</td></tr>`)
+      .join("");
+    return `<div class="sec">
+      <div class="sec-title">${hidros.length > 1 ? `Hidrolavadora ${i + 1}/${hidros.length} — ${escapeHtml(h.nombre)}${h.cantidad > 1 ? ` (×${h.cantidad})` : ""}` : "Especificaciones solicitadas"}</div>
+      <table class="specs">${filas || "<tr><td colspan='2' style='color:#aaa'>Sin especificaciones</td></tr>"}</table>
+    </div>`;
+  }).join("");
 
   res.setHeader("Content-Security-Policy",
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
@@ -1828,10 +1921,7 @@ app.get("/especialista/form", (req, res) => {
       </div>
     </div>
 
-    ${filasSpecs ? `<div class="sec">
-      <div class="sec-title">Especificaciones solicitadas por el cliente</div>
-      <table class="specs">${filasSpecs}</table>
-    </div>` : ""}
+    ${tablasSpecs}
 
     <form method="POST" action="/especialista/cotizacion">
       <input type="hidden" name="phone" value="${escapeHtml(phone)}">
@@ -1909,6 +1999,9 @@ app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), asy
   ].filter(Boolean).join("\n");
   const respuesta = partes;
 
+  // El técnico respondió — cancelar recordatorios pendientes
+  hidroSolicitudes.delete(phone);
+
   const session = sessions[phone];
   if (session) {
     session.data.hidroRespuesta = respuesta;
@@ -1961,6 +2054,15 @@ function buildKPIPage(nonce, showLogout = false) {
   const cotizaciones  = cotizacionesLog.filter(e => e.tipo === "cotizacion");
   const contactos     = cotizacionesLog.filter(e => e.tipo === "contacto");
   const problematicas = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
+  const hidroPendientesList = [...hidroSolicitudes.entries()]
+    .map(([phone, entry]) => ({
+      phone,
+      sentAt:        entry.sentAt,
+      data:          entry.data,
+      reminderCount: entry.reminderCount,
+      elapsed:       Date.now() - entry.sentAt,
+    }))
+    .sort((a, b) => b.elapsed - a.elapsed);
 
   // ── KPIs principales ────────────────────────────────────────────────────────
   const nuevos      = cotizaciones.filter(c => c.esClienteNuevo).length;
@@ -2259,6 +2361,35 @@ tbody tr:hover td{background:#FAFAFA}
       </table>`}
     </div>
   </div>
+
+  ${hidroPendientesList.length === 0 ? "" : `
+  <!-- ── Hidros pendientes ── -->
+  <div class="row row-1">
+    <div class="panel" style="grid-column:1/-1">
+      <div class="panel-hdr">
+        <div class="panel-title">🔩 Hidrolavadoras pendientes de cotización <span style="background:#F59E0B;color:#000;padding:2px 10px;border-radius:12px;font-size:12px;margin-left:8px;font-weight:700">${hidroPendientesList.length}</span></div>
+      </div>
+      <table>
+        <thead><tr><th>Espera</th><th>Cliente</th><th>WhatsApp</th><th>Unidades</th><th>Recordatorios</th></tr></thead>
+        <tbody>
+        ${hidroPendientesList.map(h => {
+          const hh = Math.floor(h.elapsed / 3600000);
+          const mm = Math.floor((h.elapsed % 3600000) / 60000);
+          const tiempoStr = hh > 0 ? hh + "h " + mm + "m" : mm + "m";
+          const color = h.elapsed > 4 * 3600000 ? "#ED0914" : h.elapsed > 2 * 3600000 ? "#F59E0B" : "#94A3B8";
+          const n = (h.data.hidrosList || []).length || 1;
+          return `<tr>
+            <td style="color:${color};white-space:nowrap;font-weight:700">${tiempoStr}</td>
+            <td style="font-weight:600">${escapeHtml(h.data.nombre || "–")}</td>
+            <td style="color:#94A3B8">+${escapeHtml(h.phone)}</td>
+            <td>${n} hidrolavadora${n > 1 ? "s" : ""}</td>
+            <td><span class="tag ${h.reminderCount > 0 ? "tag-loop" : "tag-sin"}">${h.reminderCount > 0 ? h.reminderCount + " enviado" + (h.reminderCount > 1 ? "s" : "") : "Pendiente"}</span></td>
+          </tr>`;
+        }).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div>`}
 
   <!-- ── Fila 6: Contactos + Problemáticas ── -->
   <div class="row row-2">
