@@ -308,6 +308,8 @@ const STEPS = {
   WAITING_MAS:        "waiting_mas",
   WAITING_ENTREGA:    "waiting_entrega",
   WAITING_EMAIL:      "waiting_email",
+  HIDRO_CANTIDAD:     "hidro_cantidad",
+  HIDRO_DISTINTAS:    "hidro_distintas",
   HIDRO_SPECS:        "hidro_specs",
   HIDRO_ESPERANDO:    "hidro_esperando",
   HIDRO_EMAIL:        "hidro_email",
@@ -670,6 +672,14 @@ async function handleMessage(phone, text) {
       await enviarCotizacionCompleta(phone, session.data);
       session.step = STEPS.DONE;
       setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
+      break;
+
+    case STEPS.HIDRO_CANTIDAD:
+      await manejarHidroCantidad(phone, session, text);
+      break;
+
+    case STEPS.HIDRO_DISTINTAS:
+      await manejarHidroDistintas(phone, session, text);
       break;
 
     case STEPS.HIDRO_SPECS:
@@ -1733,83 +1743,176 @@ function esHidrolavadora(nombre) {
 }
 
 const HIDRO_PREGUNTAS = [
-  { key: "agua",      msg: "💧 ¿La hidrolavadora usará *agua fría* o *agua caliente*?" },
-  { key: "corriente", msg: "⚡ ¿Qué tipo de corriente eléctrica requiere?\n*1.* Monofásica (220V)\n*2.* Trifásica (380V)" },
-  { key: "bares",     msg: "🔧 ¿Qué presión necesita?\n_Indica en bares, ej: 100, 150, 200_" },
-  { key: "caudal",    msg: "🌊 ¿Qué caudal necesita?\n_Indica en litros/minuto, ej: 10, 15, 20_" },
+  { key: "agua",      msg: "💧 ¿La hidrolavadora usará *agua fría* o *agua caliente*?",
+    valida: t => /fri|calient|ambas|las dos/.test(normalizar(t)),
+    error:  "Responde *agua fría* o *agua caliente*." },
+  { key: "corriente", msg: "⚡ ¿Qué tipo de corriente eléctrica requiere?\n*1.* Monofásica (220V)\n*2.* Trifásica (380V)",
+    valida: t => /^[12]$/.test(t.trim()) || /mono|trif|220|380|no se|no lo se/.test(normalizar(t)),
+    error:  "Responde *1* (Monofásica 220V) o *2* (Trifásica 380V)." },
+  { key: "bares",     msg: "🔧 ¿Qué presión necesita?\n_Indica en bares, ej: 100, 150, 200_",
+    valida: t => /\d/.test(t) || /no se|no lo se|cualquier/.test(normalizar(t)),
+    error:  "Indica la presión en *bares* con un número, ej: *150*. Si no la conoces, escribe *no sé*." },
+  { key: "caudal",    msg: "🌊 ¿Qué caudal necesita?\n_Indica en litros/minuto, ej: 10, 15, 20_",
+    valida: t => /\d/.test(t) || /no se|no lo se|cualquier/.test(normalizar(t)),
+    error:  "Indica el caudal en *litros/minuto* con un número, ej: *15*. Si no lo conoces, escribe *no sé*." },
   { key: "modelo",    msg: "📋 ¿Tiene algún modelo de referencia?\n_Escribe marca y modelo, o *no* si no tiene_" },
-  { key: "horas",     msg: "⏱️ ¿Cuántas horas al día operará la hidrolavadora?" },
+  { key: "horas",     msg: "⏱️ ¿Cuántas horas al día operará la hidrolavadora?",
+    valida: t => /\d/.test(t) || /media|una|dos|tres|cuatro|cinco|seis|ocho|todo el dia|jornada/.test(normalizar(t)),
+    error:  "Indica cuántas *horas al día* operará, ej: *4*." },
   { key: "uso",       msg: "🏭 ¿Para qué uso la destinará?\n_Ej: lavado de vehículos, maquinaria industrial, pisos_" },
 ];
 
 async function iniciarFlujoHidro(phone, session) {
-  const total = session.data.itemsPendientes.filter(i => esHidrolavadora(i.nombre)).length;
+  // Sacar TODOS los ítems de hidrolavadora de la cola: se cotizan aparte con especialista
+  const hidroItems = session.data.itemsPendientes.filter(i => esHidrolavadora(i.nombre));
+  session.data.itemsPendientes = session.data.itemsPendientes.filter(i => !esHidrolavadora(i.nombre));
+
   session.data.hidrosList   = [];
-  session.data.hidrosTotal  = total;
   session.data.hidrosActual = 1;
   session.data.hidroSpecs   = {};
   session.data.hidroPaso    = 0;
-  session.step = STEPS.HIDRO_SPECS;
 
-  const intro = total > 1
-    ? `🔩 Necesito especificaciones para tus *${total} hidrolavadoras*. Empecemos con la *primera:*\n\n`
-    : `🔩 Para cotizar una *hidrolavadora* correctamente, necesito algunas especificaciones técnicas.\n\n`;
+  // Si el cliente ya indicó cantidad (ej: "2 hidrolavadoras"), no volver a preguntar
+  const todasEspecificadas = hidroItems.length > 0 && hidroItems.every(i => i.cantidadEspecificada);
+  const declaradas = hidroItems.reduce((s, i) => s + (i.cantidad || 1), 0);
+
+  if (todasEspecificadas) {
+    await definirCantidadHidros(phone, session, declaradas);
+  } else {
+    session.step = STEPS.HIDRO_CANTIDAD;
+    await sendMessage(phone,
+      `🔩 ¡Perfecto! Las *hidrolavadoras* las cotiza directamente un especialista.\n\n` +
+      `¿*Cuántas unidades* necesitas cotizar?`
+    );
+  }
+}
+
+async function definirCantidadHidros(phone, session, cantidad) {
+  session.data.hidrosTotal = cantidad;
+  if (cantidad === 1) {
+    session.data.hidrosMismasSpecs = true;
+    session.step = STEPS.HIDRO_SPECS;
+    await sendMessage(phone,
+      `🔩 Para cotizar tu *hidrolavadora* correctamente, necesito algunas especificaciones técnicas.\n\n` +
+      HIDRO_PREGUNTAS[0].msg
+    );
+  } else {
+    session.step = STEPS.HIDRO_DISTINTAS;
+    await sendMessage(phone,
+      `Las *${cantidad} hidrolavadoras* que necesitas, ¿tienen las *mismas características* o son *distintas*?\n\n` +
+      `*1.* Todas iguales\n*2.* Distintas características`
+    );
+  }
+}
+
+const HIDRO_PALABRAS_NUM = { una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10 };
+
+async function manejarHidroCantidad(phone, session, text) {
+  const t = normalizar(text);
+  let cantidad = null;
+  const numMatch = t.match(/\d+/);
+  if (numMatch) {
+    cantidad = parseInt(numMatch[0]);
+  } else {
+    for (const [palabra, valor] of Object.entries(HIDRO_PALABRAS_NUM)) {
+      if (new RegExp(`\\b${palabra}\\b`).test(t)) { cantidad = valor; break; }
+    }
+  }
+  if (!cantidad || cantidad < 1 || cantidad > 50) {
+    await sendMessage(phone, `⚠️ Indícame la cantidad con un número, ej: *1*, *2*, *3*.\n\n¿Cuántas hidrolavadoras necesitas cotizar?`);
+    return;
+  }
+  await definirCantidadHidros(phone, session, cantidad);
+}
+
+async function manejarHidroDistintas(phone, session, text) {
+  const t = normalizar(text);
+  const iguales   = /^1\.?$/.test(t.trim()) || /igual|misma|identic/.test(t);
+  const distintas = /^2\.?$/.test(t.trim()) || /distint|diferent|varia/.test(t);
+  if (iguales === distintas) {
+    await sendMessage(phone, `⚠️ Responde *1* si todas son iguales o *2* si tienen distintas características.`);
+    return;
+  }
+  session.data.hidrosMismasSpecs = iguales;
+  session.step = STEPS.HIDRO_SPECS;
+  const intro = iguales
+    ? `👍 Perfecto, te preguntaré las especificaciones *una sola vez* y aplicarán para las ${session.data.hidrosTotal} unidades.\n\n`
+    : `👍 Entendido, te preguntaré las especificaciones de *cada una*. Empecemos con la *hidrolavadora 1:*\n\n`;
   await sendMessage(phone, intro + HIDRO_PREGUNTAS[0].msg);
 }
 
 async function manejarHidroSpecs(phone, session, text) {
   const paso = session.data.hidroPaso;
-  const { key } = HIDRO_PREGUNTAS[paso];
+  const pregunta = HIDRO_PREGUNTAS[paso];
+
+  // Detectar respuestas fuera de contexto (ej: "son 2" cuando se pregunta por el agua)
+  if (pregunta.valida && !pregunta.valida(text)) {
+    await sendMessage(phone,
+      `🤔 Creo que eso no responde mi pregunta. ${pregunta.error}\n\n` + pregunta.msg
+    );
+    return;
+  }
 
   // Guardar respuesta actual
-  if (key === "corriente") {
-    session.data.hidroSpecs[key] = /^[12]$/.test(text.trim())
+  if (pregunta.key === "corriente") {
+    session.data.hidroSpecs[pregunta.key] = /^[12]$/.test(text.trim())
       ? (text.trim() === "1" ? "Monofásica (220V)" : "Trifásica (380V)")
       : text;
   } else {
-    session.data.hidroSpecs[key] = text;
+    session.data.hidroSpecs[pregunta.key] = text;
   }
 
   const siguientePaso = paso + 1;
   if (siguientePaso < HIDRO_PREGUNTAS.length) {
     session.data.hidroPaso = siguientePaso;
     await sendMessage(phone, HIDRO_PREGUNTAS[siguientePaso].msg);
-  } else {
-    // Guardar specs de esta hidro en la lista acumulada
-    const itemActual = session.data.itemsPendientes[0];
+    return;
+  }
+
+  // Terminó una ronda de especificaciones
+  if (session.data.hidrosMismasSpecs) {
+    // Una sola ronda aplica a todas las unidades
     session.data.hidrosList.push({
-      nombre:   itemActual?.nombre   || `Hidrolavadora ${session.data.hidrosActual}`,
-      cantidad: itemActual?.cantidad || 1,
+      nombre:   "Hidrolavadora",
+      cantidad: session.data.hidrosTotal,
       specs: { ...session.data.hidroSpecs },
     });
-    session.data.itemsPendientes.shift();
-
-    // ¿Hay otra hidrolavadora en la cola?
-    const nextItem = session.data.itemsPendientes[0];
-    if (nextItem && esHidrolavadora(nextItem.nombre)) {
+    await finalizarFlujoHidro(phone, session);
+  } else {
+    // Ronda por unidad
+    session.data.hidrosList.push({
+      nombre:   `Hidrolavadora ${session.data.hidrosActual}`,
+      cantidad: 1,
+      specs: { ...session.data.hidroSpecs },
+    });
+    if (session.data.hidrosActual < session.data.hidrosTotal) {
       session.data.hidrosActual++;
       session.data.hidroSpecs = {};
       session.data.hidroPaso  = 0;
       await sendMessage(phone,
-        `✅ Especificaciones de la hidrolavadora *${session.data.hidrosActual - 1}/${session.data.hidrosTotal}* registradas.\n\n` +
-        `Ahora necesito las especificaciones de la *hidrolavadora ${session.data.hidrosActual}:*\n\n` +
+        `✅ Hidrolavadora *${session.data.hidrosActual - 1}/${session.data.hidrosTotal}* registrada.\n\n` +
+        `Ahora las especificaciones de la *hidrolavadora ${session.data.hidrosActual}:*\n\n` +
         HIDRO_PREGUNTAS[0].msg
       );
     } else {
-      // Todas las hidros procesadas → UN solo email al técnico con todo
-      session.step = STEPS.HIDRO_ESPERANDO;
-      await enviarSolicitudHidroEmail(phone, session.data);
-      hidroSolicitudes.set(phone, { sentAt: Date.now(), data: { ...session.data }, reminderCount: 0 });
-      const n = session.data.hidrosList.length;
-      await sendMessage(phone,
-        `✅ ¡Listo! Registramos las especificaciones ${n > 1 ? `de tus *${n} hidrolavadoras*` : "de tu *hidrolavadora*"}.\n\n` +
-        `Tu solicitud fue derivada a un *especialista* que buscará las mejores opciones.\n\n` +
-        `Te notificaremos por este medio cuando tengamos la cotización. ⏳`
-      );
-      if (session.data.itemsPendientes.length > 0) {
-        await procesarSiguienteProducto(phone, session);
-      }
+      await finalizarFlujoHidro(phone, session);
     }
+  }
+}
+
+async function finalizarFlujoHidro(phone, session) {
+  // Todas las hidros procesadas → UN solo email al técnico con todo
+  session.step = STEPS.HIDRO_ESPERANDO;
+  await enviarSolicitudHidroEmail(phone, session.data);
+  hidroSolicitudes.set(phone, { sentAt: Date.now(), data: { ...session.data }, reminderCount: 0 });
+  const n = session.data.hidrosTotal || 1;
+  await sendMessage(phone,
+    `✅ ¡Listo! Registramos las especificaciones ${n > 1 ? `de tus *${n} hidrolavadoras*` : "de tu *hidrolavadora*"}.\n\n` +
+    `Tu solicitud fue derivada a un *especialista* que buscará las mejores opciones.\n\n` +
+    `Te notificaremos por este medio cuando tengamos la cotización. ⏳`
+  );
+  if (session.data.itemsPendientes.length > 0) {
+    await procesarSiguienteProducto(phone, session);
   }
 }
 
@@ -1876,11 +1979,12 @@ function buildHidroEmailHtml(phone, data, esRecordatorio = false) {
          <strong style="color:#ED0914">⏰ Recordatorio:</strong> Esta solicitud lleva más de 2 horas sin respuesta.
        </div>` : "";
 
+  const totalUnidades = hidros.reduce((s, h) => s + (h.cantidad || 1), 0);
   return {
-    subject: `${esRecordatorio ? "⏰ RECORDATORIO: " : ""}🔩 Solicitud Hidrolavadora${hidros.length > 1 ? ` (${hidros.length} equipos)` : ""} — ${data.razonSocial}`,
+    subject: `${esRecordatorio ? "⏰ RECORDATORIO: " : ""}🔩 Solicitud Hidrolavadora${totalUnidades > 1 ? ` (${totalUnidades} equipos)` : ""} — ${data.razonSocial}`,
     html: `
       ${alertaRecordatorio}
-      <h2>🔩 ${esRecordatorio ? "Recordatorio: " : ""}Solicitud de hidrolavadora${hidros.length > 1 ? `s (${hidros.length} equipos)` : ""}</h2>
+      <h2>🔩 ${esRecordatorio ? "Recordatorio: " : ""}Solicitud de hidrolavadora${totalUnidades > 1 ? `s (${totalUnidades} equipos)` : ""}</h2>
       <p><strong>Fecha:</strong> ${fecha}</p>
       <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${escapeHtml(data.rut || "–")} | WhatsApp: +${escapeHtml(phone)}</p>
       ${tablas}
@@ -2503,7 +2607,7 @@ tbody tr:hover td{background:#FAFAFA}
           const mm = Math.floor((h.elapsed % 3600000) / 60000);
           const tiempoStr = hh > 0 ? hh + "h " + mm + "m" : mm + "m";
           const color = h.elapsed > 4 * 3600000 ? "#ED0914" : h.elapsed > 2 * 3600000 ? "#F59E0B" : "#94A3B8";
-          const n = (h.data.hidrosList || []).length || 1;
+          const n = (h.data.hidrosList || []).reduce((s, x) => s + (x.cantidad || 1), 0) || 1;
           return `<tr>
             <td style="color:${color};white-space:nowrap;font-weight:700">${tiempoStr}</td>
             <td style="font-weight:600">${escapeHtml(h.data.nombre || "–")}</td>
