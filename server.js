@@ -864,7 +864,6 @@ async function buscarParaClienteExistente(phone, session, item) {
     let msg = `📦 Encontré este producto en tu historial:\n\n`;
     msg += `*${p.DesProd}*\n`;
     msg += `🏷️ Código: ${p.CodProd}\n`;
-    msg += `💰 Precio: $${p.precio.toLocaleString("es-CL")}\n`;
     msg += `📅 Última compra: ${p.fecha}\n\n`;
     msg += `¿Es este el producto correcto? Responde *sí* o *no*.`;
     session.step = STEPS.CONFIRMANDO;
@@ -1032,9 +1031,8 @@ async function mostrarOpcionesProducto(phone, session, opciones, item) {
   let msg = `📋 *Opciones disponibles para "${item.nombre}":*\n\n`;
   lista.forEach((p, i) => {
     const prov = abreviarProveedor(p.Proveedor);
-    const precio = parsearPrecio(p["Precio Lista"]);
     msg += `*${i + 1}.* ${p.DesProd}\n`;
-    msg += `   💰 $${precio.toLocaleString("es-CL")} | 🏭 ${prov}\n\n`;
+    msg += `   🏭 ${prov}\n\n`;
   });
 
   if (lista.length > 1) {
@@ -1213,7 +1211,7 @@ async function manejarConfirmacion(phone, session, text) {
       confirmado:   true,
     });
     session.data.modoAlternativas = false;
-    await sendMessage(phone, `✅ Seleccionado: *${elegido.DesProd}*\n💰 $${elegido.precio.toLocaleString("es-CL")}`);
+    await sendMessage(phone, `✅ Seleccionado: *${elegido.DesProd}*`);
     session.data.itemsPendientes.shift();
     await siguientePasoTrasConfirmacion(phone, session);
     return;
@@ -1245,7 +1243,7 @@ async function manejarConfirmacion(phone, session, text) {
     let msg = `📋 *Alternativas para "${item.nombre}":*\n\n`;
     opciones.forEach((p, i) => {
       msg += `*${i + 1}.* ${p.DesProd}\n`;
-      msg += `   💰 $${p.precio.toLocaleString("es-CL")} | 📅 ${p.fecha}\n\n`;
+      msg += `   📅 Última compra: ${p.fecha}\n\n`;
     });
     msg += `Responde con el *número* de tu elección.`;
     session.data.modoAlternativas = true;
@@ -1289,21 +1287,16 @@ async function mostrarResumenFinal(phone, session) {
     return;
   }
 
-  let msg = `📋 *Resumen de tu cotización:*\n\n`;
-  let total = 0;
+  let msg = `📋 *Resumen de tu solicitud:*\n\n`;
   confirmados.forEach((item, i) => {
-    const p        = item.seleccionado;
-    const subtotal = p.precio * item.cantidad;
-    total += subtotal;
+    const p = item.seleccionado;
     msg += `*${i + 1}. ${p.DesProd}*\n`;
     msg += `   🏷️ Código: ${p.CodProd}\n`;
-    msg += `   💰 Precio: $${p.precio.toLocaleString("es-CL")}\n`;
-    msg += `   📦 Cantidad: ${item.cantidad} ${item.unidad}\n`;
-    msg += `   💵 Subtotal: $${subtotal.toLocaleString("es-CL")}\n\n`;
+    msg += `   📦 Cantidad: ${item.cantidad} ${item.unidad}\n\n`;
   });
-  msg += `*💵 TOTAL: $${total.toLocaleString("es-CL")}*\n\n`;
 
   const condicionPago = session.data.esClienteNuevo ? "Contado" : "30 días";
+  msg += `📧 Los *precios y el total* van incluidos en la cotización que enviaremos a tu correo.\n\n`;
   msg += `🕒 *Vigencia de precios:* 72 horas\n`;
   msg += `🚚 *Despacho:* Puerto Montt\n`;
   msg += `💳 *Condición de pago:* ${condicionPago}\n\n`;
