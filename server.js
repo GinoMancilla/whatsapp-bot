@@ -574,6 +574,35 @@ async function handleMessage(phone, text) {
       break;
 
     case STEPS.WAITING_RUT: {
+      const tNormRut = normalizar(text);
+      // Detectar negativa a entregar el RUT
+      const rechazaRut = /^no\.?$/.test(tNormRut) ||
+        /no quiero|no lo tengo|no tengo rut|no me lo se|no lo se|prefiero no|para que|por que lo (piden|necesitan)|sin rut|no dar|no entregar|no compartir|es (necesario|obligatorio)/.test(tNormRut);
+      const aceptaSinRut = session.data.ofrecioSinRut &&
+        /^(si|s|ok|dale|bueno|ya|continuar|continuemos|sigamos|sin rut)\.?$/.test(tNormRut);
+
+      if (aceptaSinRut || (rechazaRut && session.data.ofrecioSinRut)) {
+        // Cliente insiste o acepta → continuar sin RUT como cliente nuevo (precio lista)
+        session.data.rut       = "";
+        session.data.rutLimpio = "";
+        session.data.rutSinDV  = null; // null no matchea historial → precio lista
+        session.data.sinRut    = true;
+        session.step = STEPS.WAITING_RAZON;
+        await sendMessage(phone,
+          `👍 Sin problema, te cotizaré con *precio lista*.\n\n` +
+          `¿Cuál es tu *nombre o razón social*?`
+        );
+        break;
+      }
+      if (rechazaRut) {
+        session.data.ofrecioSinRut = true;
+        await sendMessage(phone,
+          `El RUT solo lo uso para buscar tus *precios preferenciales* si ya eres cliente de CINTEC. 😊\n\n` +
+          `Si prefieres no entregarlo, puedo cotizarte con *precio lista*.\n\n` +
+          `Responde *sí* para continuar sin RUT, o ingresa tu *RUT* para buscar tus precios.`
+        );
+        break;
+      }
       // Si el texto tiene menos de 6 dígitos no puede ser un RUT — el cliente escribió otra cosa
       const digitosEnTexto = (text.match(/\d/g) || []).length;
       if (digitosEnTexto < 6) {
@@ -582,7 +611,8 @@ async function handleMessage(phone, text) {
           `Si tienes *RUT de empresa*, ingrésalo.\n` +
           `De lo contrario, ingresa tu *RUT personal*.\n\n` +
           `_Ej empresa: 76.123.456-7_\n` +
-          `_Ej personal: 12.345.678-9_`
+          `_Ej personal: 12.345.678-9_` +
+          (session.data.ofrecioSinRut ? `\n\n_O responde *sí* para cotizar sin RUT con precio lista._` : "")
         );
         break;
       }
@@ -1543,7 +1573,7 @@ async function enviarCotizacionCompleta(phone, data) {
         </div>
         <div style="padding:20px;">
           <p>Estimado/a <strong>${escapeHtml(data.razonSocial)}</strong>,</p>
-          <p><strong>Fecha:</strong> ${fecha} &nbsp; <strong>RUT:</strong> ${escapeHtml(data.rut)}</p>
+          <p><strong>Fecha:</strong> ${fecha} &nbsp; <strong>RUT:</strong> ${data.rut ? escapeHtml(data.rut) : "Por confirmar"}</p>
           ${data.esClienteNuevo ? '<p><em>Precios según lista vigente.</em></p>' : ''}
           <table style="width:100%; border-collapse:collapse; margin-top:10px;">
             <tr style="background:#c0392b; color:white;">
@@ -1580,9 +1610,9 @@ async function enviarCotizacionCompleta(phone, data) {
     await resend.emails.send({
       from: "Bot CINTEC <onboarding@resend.dev>",
       to: DESTINATION_EMAIL,
-      subject: `📦 Cotización enviada - ${data.razonSocial}${data.esClienteNuevo ? " (CLIENTE NUEVO)" : ""}`,
+      subject: `📦 Cotización enviada - ${data.razonSocial}${data.sinRut ? " (SIN RUT)" : data.esClienteNuevo ? " (CLIENTE NUEVO)" : ""}`,
       html: `<h2 style="color:#c0392b;">📲 Cotización enviada vía WhatsApp</h2>
-        <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${escapeHtml(data.rut)}</p>
+        <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${data.rut ? escapeHtml(data.rut) : `<span style="color:#e74c3c;font-weight:bold">⚠️ SIN RUT — solicitar al facturar</span>`}</p>
         <p><strong>Email:</strong> ${escapeHtml(data.emailCliente)} | WhatsApp: +${escapeHtml(phone)}</p>
         <p><strong>Tipo:</strong> ${data.esClienteNuevo ? "🆕 Cliente nuevo (Precio Lista)" : "✅ Cliente existente"}</p>
         ${htmlCotizacion}`,
@@ -2575,7 +2605,7 @@ tbody tr:hover td{background:#FAFAFA}
           <tr>
             <td style="color:#94A3B8;white-space:nowrap">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</td>
             <td style="font-weight:600">${escapeHtml(c.razonSocial || "–")}</td>
-            <td style="color:#94A3B8">${escapeHtml(c.rut || "–")}</td>
+            <td style="color:#94A3B8">${c.rut ? escapeHtml(c.rut) : `<span class="tag tag-loop">SIN RUT</span>`}</td>
             <td><span class="tag ${c.esClienteNuevo ? "tag-new" : "tag-rec"}">${c.esClienteNuevo ? "Nuevo" : "Recurrente"}</span></td>
             <td style="text-align:right;font-weight:700;color:#ED0914">$${(c.total || 0).toLocaleString("es-CL")}</td>
             <td style="color:#94A3B8">${escapeHtml(c.emailCliente || "–")}</td>
