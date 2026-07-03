@@ -101,6 +101,17 @@ function guardarLog() {
   catch (err) { console.error("Error guardando log:", err.message); }
 }
 
+// ─── Seguimiento post-cotización ──────────────────────────────────────────────
+// phone → { cotId, sentAt } — clientes con seguimiento enviado esperando respuesta
+const seguimientosPendientes = new Map();
+// Reconstruir marcadores tras un reinicio del servidor
+for (const c of cotizacionesLog) {
+  if (c.tipo === "cotizacion" && c.seguimientoEnviado && !c.respuestaSeguimiento && c.seguimientoEnviadoAt &&
+      Date.now() - new Date(c.seguimientoEnviadoAt).getTime() < 7 * 24 * 60 * 60 * 1000) {
+    seguimientosPendientes.set(c.phone, { cotId: c.id, sentAt: new Date(c.seguimientoEnviadoAt).getTime() });
+  }
+}
+
 function registrarCotizacion(phone, data) {
   if (TEST_PHONES.has(phone)) return;
   cotizacionesLog.push({
@@ -229,6 +240,49 @@ setInterval(async () => {
     }
   }
 }, 30 * 60 * 1000);
+
+// ─── Seguimiento post-cotización: preguntar si revisó la cotización ──────────
+// A las 23h (dentro de la ventana de 24h de WhatsApp; pasado eso Meta exige plantilla)
+const SEGUIMIENTO_TRAS = 23 * 60 * 60 * 1000;
+const SEGUIMIENTO_MAX  = 48 * 60 * 60 * 1000; // no seguir cotizaciones más antiguas
+
+async function procesarSeguimientos() {
+  const now = Date.now();
+  let cambios = false;
+  for (const c of cotizacionesLog) {
+    if (c.tipo !== "cotizacion" || c.seguimientoEnviado) continue;
+    const edad = now - new Date(c.timestamp).getTime();
+    if (edad < SEGUIMIENTO_TRAS || edad > SEGUIMIENTO_MAX) continue;
+
+    // Si ya envió comprobante de pago después de la cotización, no hay nada que seguir
+    const pago = cotizacionesLog.some(e => e.tipo === "comprobante" && e.phone === c.phone &&
+      new Date(e.timestamp) > new Date(c.timestamp));
+    if (pago) {
+      c.seguimientoEnviado   = true;
+      c.respuestaSeguimiento = "pago_recibido";
+      cambios = true;
+      continue;
+    }
+
+    c.seguimientoEnviado   = true;
+    c.seguimientoEnviadoAt = new Date().toISOString();
+    c.respuestaSeguimiento = "";
+    cambios = true;
+    seguimientosPendientes.set(c.phone, { cotId: c.id, sentAt: now });
+    try {
+      await sendMessage(c.phone,
+        `👋 ¡Hola${c.razonSocial ? ` *${c.razonSocial}*` : ""}! Ayer te enviamos la *cotización de CINTEC* a tu correo.\n\n` +
+        `¿Tuviste oportunidad de revisarla? Si tienes consultas o quieres *confirmar tu pedido*, responde este mensaje y te ayudamos. 🙏`
+      );
+      console.log(`📤 Seguimiento enviado a +${c.phone} (${c.id})`);
+    } catch (err) {
+      console.error(`Error en seguimiento ${c.phone}:`, err.message);
+    }
+  }
+  if (cambios) guardarLog();
+}
+setInterval(procesarSeguimientos, 60 * 60 * 1000);      // cada hora
+setTimeout(procesarSeguimientos, 5 * 60 * 1000);        // primera pasada tras el arranque
 
 // ─── Rate limiter WhatsApp: ventana deslizante por usuario (máx 12 msg/min) ──
 // Cada usuario tiene su propia ventana de 60s que arranca con su primer mensaje.
@@ -550,6 +604,39 @@ async function handleMessage(phone, text) {
       `_Si necesitas ayuda, un ejecutivo de ventas puede atenderte directamente._`
     );
     return;
+  }
+
+  // ── Respuesta a seguimiento post-cotización ────────────────────────────────
+  const seg = seguimientosPendientes.get(phone);
+  if (seg && (session.step === STEPS.START || session.step === STEPS.DONE)) {
+    seguimientosPendientes.delete(phone);
+    const cot = cotizacionesLog.find(e => e.id === seg.cotId);
+    const tSeg = normalizar(text);
+    const quiereCotizar = /^hola\.?$/.test(tSeg) || /cotizar|nueva cotizacion|otra cotizacion/.test(tSeg);
+    const sinInteres = /^no\.?$/.test(tSeg) ||
+      /no gracias|no me interesa|no por ahora|ya compr|no quiero|no lo necesito|descartar|mas adelante|quizas despues/.test(tSeg);
+
+    if (quiereCotizar) {
+      // Quiere cotizar de nuevo: marcar interés y dejar que siga el flujo normal
+      if (cot) { cot.respuestaSeguimiento = "interesado"; guardarLog(); }
+    } else if (sinInteres) {
+      if (cot) { cot.respuestaSeguimiento = "sin_interes"; guardarLog(); }
+      await sendMessage(phone,
+        `Gracias por avisarnos. 🙏 Si más adelante necesitas cotizar, escribe *hola* y te atendemos al instante.`
+      );
+      session.step = STEPS.DONE;
+      return;
+    } else {
+      // Respondió con interés o una consulta → derivar al ejecutivo con contexto
+      if (cot) { cot.respuestaSeguimiento = "interesado"; guardarLog(); }
+      await notificarSeguimientoInteresado(phone, cot, text);
+      await sendMessage(phone,
+        `✅ ¡Excelente! Un *ejecutivo de CINTEC* te contactará a la brevedad para ayudarte con tu pedido.\n\n` +
+        `_Si necesitas cotizar algo más, escribe *hola*._`
+      );
+      session.step = STEPS.DONE;
+      return;
+    }
   }
 
   // ── Solicitud de ejecutivo humano (desde cualquier punto del flujo) ─────────
@@ -1738,6 +1825,13 @@ async function manejarComprobante(phone, msg) {
       });
     }
 
+    // El cliente pagó → cancelar seguimiento pendiente de esa cotización
+    seguimientosPendientes.delete(phone);
+    if (ultimaCot && ultimaCot.seguimientoEnviado && !ultimaCot.respuestaSeguimiento) {
+      ultimaCot.respuestaSeguimiento = "pago_recibido";
+      guardarLog();
+    }
+
     registrarComprobante(phone, {
       razonSocial, rut, filename, mimeType,
       cotizacionId:    ultimaCot?.id    || "",
@@ -1754,6 +1848,29 @@ async function manejarComprobante(phone, msg) {
       `⚠️ No pudimos procesar el archivo. Intenta enviarlo nuevamente ` +
       `o mándalo por correo a *caja@cintecsa.cl*.`
     );
+  }
+}
+
+// ─── Notificar respuesta a seguimiento ────────────────────────────────────────
+async function notificarSeguimientoInteresado(phone, cot, mensaje) {
+  if (!resendClient) return;
+  try {
+    const fecha = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+    await resendClient.emails.send({
+      from:    "Bot CINTEC <onboarding@resend.dev>",
+      to:      DESTINATION_EMAIL,
+      subject: `🔥 Cliente respondió al seguimiento — ${cot?.razonSocial || "+" + phone}`,
+      html: `<h2 style="color:#c0392b;">🔥 Respuesta al seguimiento de cotización</h2>
+        <p><strong>Fecha:</strong> ${fecha}</p>
+        <p><strong>Cliente:</strong> ${escapeHtml(cot?.razonSocial || "–")} | RUT: ${escapeHtml(cot?.rut || "–")}</p>
+        <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
+        ${cot ? `<p><strong>Cotización:</strong> ${escapeHtml(cot.id)} por $${(cot.total || 0).toLocaleString("es-CL")} (${new Date(cot.timestamp).toLocaleString("es-CL", { timeZone: "America/Santiago" })})</p>` : ""}
+        <p><strong>Mensaje del cliente:</strong></p>
+        <div style="background:#f5f5f5;padding:12px 16px;border-radius:8px;">${escapeHtml(mensaje)}</div>
+        <p>Cliente con interés activo — contactar para cerrar la venta. 🎯</p>`,
+    });
+  } catch (err) {
+    console.error("Error notificando seguimiento:", err.message);
   }
 }
 
@@ -2656,7 +2773,7 @@ tbody tr:hover td{background:#FAFAFA}
       </div>
       ${cotizaciones.length === 0 ? `<div class="empty">Sin cotizaciones registradas aún</div>` : `
       <table>
-        <thead><tr><th>Fecha</th><th>Cliente</th><th>RUT</th><th>Tipo</th><th style="text-align:right">Total</th><th>Email</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Cliente</th><th>RUT</th><th>Tipo</th><th style="text-align:right">Total</th><th>Email</th><th>Seguimiento</th></tr></thead>
         <tbody>
         ${[...cotizaciones].reverse().slice(0, 20).map(c => `
           <tr>
@@ -2666,6 +2783,12 @@ tbody tr:hover td{background:#FAFAFA}
             <td><span class="tag ${c.esClienteNuevo ? "tag-new" : "tag-rec"}">${c.esClienteNuevo ? "Nuevo" : "Recurrente"}</span></td>
             <td style="text-align:right;font-weight:700;color:#ED0914">$${(c.total || 0).toLocaleString("es-CL")}</td>
             <td style="color:#94A3B8">${escapeHtml(c.emailCliente || "–")}</td>
+            <td>${
+              c.respuestaSeguimiento === "interesado"     ? `<span class="tag tag-new">🔥 Interesado</span>` :
+              c.respuestaSeguimiento === "sin_interes"    ? `<span class="tag tag-sin">❄️ Sin interés</span>` :
+              c.respuestaSeguimiento === "pago_recibido"  ? `<span class="tag tag-rec">💰 Pagó</span>` :
+              c.seguimientoEnviado                        ? `<span class="tag tag-loop">📤 Enviado</span>` : "–"
+            }</td>
           </tr>`).join("")}
         </tbody>
       </table>`}
