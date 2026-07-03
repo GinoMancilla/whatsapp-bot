@@ -113,6 +113,7 @@ function registrarCotizacion(phone, data) {
     esClienteNuevo: !!data.esClienteNuevo,
     emailCliente:  data.emailCliente || "",
     direccionEntrega: data.direccionEntrega || "",
+    requiereFlete:    !!data.requiereFlete,
     productos:     (data.productosConfirmados || []).map(item => ({
       codigo:      item.seleccionado?.CodProd || "",
       descripcion: item.seleccionado?.DesProd || "",
@@ -320,6 +321,51 @@ const STEPS = {
 function normalizar(str) {
   return (str || "").toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
+// ─── Cobertura de entregas directas ──────────────────────────────────────────
+// Regiones: Los Lagos, Los Ríos, Biobío + comunas puntuales (Punta Arenas, Natales, Temuco)
+const COMUNAS_COBERTURA = [
+  // Región de Los Lagos
+  "puerto montt", "puerto varas", "llanquihue", "frutillar", "fresia", "los muermos",
+  "maullin", "calbuco", "cochamo", "osorno", "san pablo", "puyehue", "rio negro",
+  "purranque", "puerto octay", "san juan de la costa", "castro", "ancud", "quellon",
+  "chonchi", "dalcahue", "curaco de velez", "puqueldon", "queilen", "quemchi",
+  "quinchao", "chaiten", "futaleufu", "hualaihue", "palena", "los lagos",
+  // Región de Los Ríos
+  "valdivia", "corral", "lanco", "mafil", "mariquina", "san jose de la mariquina",
+  "paillaco", "panguipulli", "la union", "futrono", "lago ranco", "rio bueno", "los rios",
+  // Región del Biobío
+  "concepcion", "coronel", "chiguayante", "florida", "hualqui", "lota", "penco",
+  "san pedro de la paz", "santa juana", "talcahuano", "tome", "hualpen", "lebu",
+  "arauco", "canete", "contulmo", "curanilahue", "los alamos", "tirua", "los angeles",
+  "antuco", "cabrero", "laja", "mulchen", "nacimiento", "negrete", "quilaco",
+  "quilleco", "san rosendo", "santa barbara", "tucapel", "yumbel", "alto biobio", "biobio",
+  // Comunas puntuales
+  "punta arenas", "puerto natales", "natales", "temuco",
+];
+// Localidades conocidas FUERA de cobertura (para detectar y avisar flete)
+const LOCALIDADES_FUERA = [
+  "la florida", "santiago", "providencia", "las condes", "nunoa", "maipu", "puente alto",
+  "san bernardo", "quilicura", "estacion central", "recoleta", "independencia", "vitacura",
+  "lo barnechea", "penalolen", "macul", "la reina", "huechuraba", "renca", "cerrillos",
+  "pudahuel", "colina", "lampa", "melipilla", "talagante", "buin", "paine",
+  "vina del mar", "valparaiso", "quilpue", "villa alemana", "concon", "quillota", "san antonio",
+  "antofagasta", "calama", "mejillones", "tocopilla", "iquique", "alto hospicio", "pozo almonte",
+  "arica", "la serena", "coquimbo", "ovalle", "illapel", "vallenar", "copiapo", "caldera",
+  "rancagua", "machali", "rengo", "san fernando", "santa cruz", "talca", "curico", "linares",
+  "cauquenes", "constitucion", "chillan", "san carlos", "bulnes", "quirihue",
+  "coyhaique", "puerto aysen", "chile chico", "cochrane",
+  "villarrica", "pucon", "angol", "victoria", "lautaro", "nueva imperial", "padre las casas",
+  "porvenir", "puerto williams",
+];
+
+function clasificarZonaEntrega(direccion) {
+  const d = normalizar(direccion);
+  const contiene = lista => lista.some(c => new RegExp(`\\b${c}\\b`).test(d));
+  if (contiene(LOCALIDADES_FUERA)) return "fuera";
+  if (contiene(COMUNAS_COBERTURA)) return "cobertura";
+  return "desconocida";
 }
 
 // Reduce plural español a raíz: "guantes"→"guante", "bidones"→"bidon"
@@ -689,8 +735,18 @@ async function handleMessage(phone, text) {
         break;
       }
       session.data.direccionEntrega = text;
+      session.data.requiereFlete = clasificarZonaEntrega(text) === "fuera";
       session.step = STEPS.WAITING_EMAIL;
-      await sendMessage(phone, `📧 ¿A qué *correo electrónico* enviamos la cotización?`);
+      if (session.data.requiereFlete) {
+        await sendMessage(phone,
+          `ℹ️ En esa comuna *no realizamos entregas directas*.\n\n` +
+          `Tu pedido se despacha por *flete externo* y su valor se cotiza por separado — ` +
+          `un ejecutivo te confirmará el costo del envío. 🚚\n\n` +
+          `📧 ¿A qué *correo electrónico* enviamos la cotización?`
+        );
+      } else {
+        await sendMessage(phone, `📧 ¿A qué *correo electrónico* enviamos la cotización?`);
+      }
       break;
 
     case STEPS.WAITING_EMAIL:
@@ -1595,7 +1651,7 @@ async function enviarCotizacionCompleta(phone, data) {
               <td>💳 <strong>Condición de pago:</strong> ${data.esClienteNuevo ? "Contado" : "30 días"}</td>
             </tr>
           </table>
-          ${data.direccionEntrega ? `<p style="font-size:13px; color:#444; margin-top:10px;">📦 <strong>Lugar de entrega:</strong> ${escapeHtml(data.direccionEntrega)}</p>` : ""}
+          ${data.direccionEntrega ? `<p style="font-size:13px; color:#444; margin-top:10px;">📦 <strong>Lugar de entrega:</strong> ${escapeHtml(data.direccionEntrega)}${data.requiereFlete ? ` <em style="color:#e74c3c;">(fuera de zona de entrega directa — flete por cotizar)</em>` : ""}</p>` : ""}
           ${DATOS_BANCARIOS_HTML}
         </div>
       </div>`;
@@ -1615,6 +1671,7 @@ async function enviarCotizacionCompleta(phone, data) {
         <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${data.rut ? escapeHtml(data.rut) : `<span style="color:#e74c3c;font-weight:bold">⚠️ SIN RUT — solicitar al facturar</span>`}</p>
         <p><strong>Email:</strong> ${escapeHtml(data.emailCliente)} | WhatsApp: +${escapeHtml(phone)}</p>
         <p><strong>Tipo:</strong> ${data.esClienteNuevo ? "🆕 Cliente nuevo (Precio Lista)" : "✅ Cliente existente"}</p>
+        ${data.requiereFlete ? `<p style="color:#e74c3c;font-weight:bold;">🚚 REQUIERE FLETE — entrega fuera de zona directa (${escapeHtml(data.direccionEntrega || "")}). Cotizar valor del envío.</p>` : ""}
         ${htmlCotizacion}`,
     });
 
