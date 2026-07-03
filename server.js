@@ -242,9 +242,12 @@ setInterval(async () => {
 }, 30 * 60 * 1000);
 
 // ─── Seguimiento post-cotización: preguntar si revisó la cotización ──────────
-// A las 23h (dentro de la ventana de 24h de WhatsApp; pasado eso Meta exige plantilla)
-const SEGUIMIENTO_TRAS = 23 * 60 * 60 * 1000;
-const SEGUIMIENTO_MAX  = 48 * 60 * 60 * 1000; // no seguir cotizaciones más antiguas
+// A los 3 días, usando la plantilla aprobada por Meta "seguimiento_cotizacion"
+// (fuera de la ventana de 24h solo se permiten plantillas pre-aprobadas).
+// Se envía UNA sola vez — si el cliente no responde, no se insiste.
+const SEGUIMIENTO_TRAS     = 3 * 24 * 60 * 60 * 1000;
+const SEGUIMIENTO_MAX      = 7 * 24 * 60 * 60 * 1000; // no seguir cotizaciones más antiguas
+const SEGUIMIENTO_TEMPLATE = "seguimiento_cotizacion";
 
 async function procesarSeguimientos() {
   const now = Date.now();
@@ -264,19 +267,18 @@ async function procesarSeguimientos() {
       continue;
     }
 
-    c.seguimientoEnviado   = true;
-    c.seguimientoEnviadoAt = new Date().toISOString();
-    c.respuestaSeguimiento = "";
-    cambios = true;
-    seguimientosPendientes.set(c.phone, { cotId: c.id, sentAt: now });
-    try {
-      await sendMessage(c.phone,
-        `👋 ¡Hola${c.razonSocial ? ` *${c.razonSocial}*` : ""}! Ayer te enviamos la *cotización de CINTEC* a tu correo.\n\n` +
-        `¿Tuviste oportunidad de revisarla? Si tienes consultas o quieres *confirmar tu pedido*, responde este mensaje y te ayudamos. 🙏`
-      );
-      console.log(`📤 Seguimiento enviado a +${c.phone} (${c.id})`);
-    } catch (err) {
-      console.error(`Error en seguimiento ${c.phone}:`, err.message);
+    // Fuera de la ventana de 24h de WhatsApp → solo se puede enviar plantilla aprobada
+    const ok = await sendTemplate(c.phone, SEGUIMIENTO_TEMPLATE, [c.razonSocial || "Estimado cliente"]);
+    if (ok) {
+      c.seguimientoEnviado   = true;
+      c.seguimientoEnviadoAt = new Date().toISOString();
+      c.respuestaSeguimiento = "";
+      cambios = true;
+      seguimientosPendientes.set(c.phone, { cotId: c.id, sentAt: now });
+      console.log(`📤 Seguimiento (plantilla) enviado a +${c.phone} (${c.id})`);
+    } else {
+      // Plantilla aún no aprobada o error de envío → se reintenta en la próxima pasada
+      console.warn(`Seguimiento no enviado a +${c.phone}, se reintentará en 1h`);
     }
   }
   if (cambios) guardarLog();
@@ -607,7 +609,11 @@ async function handleMessage(phone, text) {
   }
 
   // ── Respuesta a seguimiento post-cotización ────────────────────────────────
-  const seg = seguimientosPendientes.get(phone);
+  let seg = seguimientosPendientes.get(phone);
+  if (seg && Date.now() - seg.sentAt > 7 * 24 * 60 * 60 * 1000) {
+    seguimientosPendientes.delete(phone); // marcador vencido → conversación normal
+    seg = null;
+  }
   if (seg && (session.step === STEPS.START || session.step === STEPS.DONE)) {
     seguimientosPendientes.delete(phone);
     const cot = cotizacionesLog.find(e => e.id === seg.cotId);
@@ -2241,6 +2247,33 @@ async function sendMessage(to, body) {
     );
   } catch (err) {
     console.error("Error enviando mensaje:", err.response?.data || err.message);
+  }
+}
+
+// Plantillas pre-aprobadas por Meta — únicas permitidas fuera de la ventana de 24h
+async function sendTemplate(to, templateName, bodyParams = []) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to,
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: "es" },
+          components: bodyParams.length ? [{
+            type: "body",
+            parameters: bodyParams.map(t => ({ type: "text", text: String(t) })),
+          }] : [],
+        },
+      },
+      { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
+    );
+    return true;
+  } catch (err) {
+    console.error("Error enviando plantilla:", err.response?.data || err.message);
+    return false;
   }
 }
 
