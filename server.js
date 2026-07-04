@@ -438,6 +438,28 @@ function esUnaConsulta(text) {
     .test(normalizar(text));
 }
 
+// Busca en el catálogo productos relacionados con la pregunta (solo nombres, sin precios)
+// para que Claude responda con productos reales de CINTEC en vez de inventar.
+async function buscarContextoCatalogo(session, pregunta) {
+  try {
+    const rows = session.data.rows || await cargarCSV();
+    if (!rows) return "";
+    const keywords = normalizar(pregunta).split(" ")
+      .filter(w => w.length > 3 && !STOP_WORDS_ENVASE.has(w) && !/^\d+$/.test(w));
+    if (keywords.length === 0) return "";
+    const vistos = new Set();
+    const nombres = [];
+    for (const kw of keywords) {
+      for (const p of buscarEnCatalogo(rows, [kw])) {
+        if (!vistos.has(p.CodProd)) { vistos.add(p.CodProd); nombres.push(p.DesProd); }
+        if (nombres.length >= 12) break;
+      }
+      if (nombres.length >= 12) break;
+    }
+    return nombres.length ? nombres.join(" | ") : "";
+  } catch { return ""; }
+}
+
 async function responderConsulta(phone, session, pregunta) {
   if (!anthropicClient) return false;
   try {
@@ -452,6 +474,14 @@ async function responderConsulta(phone, session, pregunta) {
       buscando    && `Producto en búsqueda actual: ${buscando}`,
     ].filter(Boolean).join(". ");
 
+    // Productos reales del catálogo relacionados con la pregunta (nombres, sin precios)
+    const catalogo = await buscarContextoCatalogo(session, pregunta);
+
+    // Memoria: últimos mensajes del cliente para dar continuidad a preguntas de seguimiento
+    const historial = (session.data.mensajesRecientes || [])
+      .slice(-6, -1) // excluye el mensaje actual (ya viene como `pregunta`)
+      .map(m => ({ role: "user", content: m.text }));
+
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 250,
@@ -460,10 +490,11 @@ async function responderConsulta(phone, session, pregunta) {
         `Responde SOLO preguntas relacionadas con productos de limpieza, cotizaciones o servicios de CINTEC. ` +
         `Responde en español, de forma breve (máx 2-3 oraciones). ` +
         `Si no tienes la información exacta, di "un ejecutivo puede ayudarte con eso". ` +
-        `NUNCA inventes precios, disponibilidad, ni datos de productos. ` +
+        `NUNCA inventes precios, disponibilidad, ni datos de productos. Los precios SOLO se entregan en la cotización final por correo — si preguntan un precio, di que lo verán en la cotización. ` +
         `Si te preguntan algo fuera del ámbito comercial de CINTEC (política, religión, contenido adulto, temas personales), responde solo: "Estoy aquí para ayudarte con cotizaciones de CINTEC." ` +
+        (catalogo ? `Productos reales de nuestro catálogo relacionados con la consulta (menciona solo estos, sin precios): ${catalogo}. ` : `No hay productos en catálogo que coincidan con la consulta; si preguntan por disponibilidad de un producto puntual, deriva a un ejecutivo. `) +
         (contextLine ? `Contexto de la cotización en curso: ${contextLine}.` : ""),
-      messages: [{ role: "user", content: pregunta }],
+      messages: [...historial, { role: "user", content: pregunta }],
     });
 
     const reply = response.content[0]?.text || "";
@@ -916,12 +947,61 @@ async function manejarMenuInicio(phone, session, text) {
     return;
   }
 
-  // No se entendió la opción → repetir menú
+  // Las regex no reconocieron el mensaje → clasificar intención con Claude
+  const intencion = await clasificarIntencion(text);
+  if (intencion === "cotizar") {
+    session.step = STEPS.WAITING_RUT;
+    await sendMessage(phone,
+      `📦 ¡Perfecto! Para cotizarte necesito algunos datos.\n\n` +
+      `Si tienes *RUT de empresa*, ingrésalo.\n` +
+      `De lo contrario, ingresa tu *RUT personal*.\n\n` +
+      `_Ej empresa: 76.123.456-7_\n` +
+      `_Ej personal: 12.345.678-9_`
+    );
+    return;
+  }
+  if (intencion === "contacto") {
+    session.step = STEPS.CONTACTO_NOMBRE;
+    await sendMessage(phone,
+      `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n` +
+      `¿Cuál es tu *nombre* para informarle?`
+    );
+    return;
+  }
+
+  // Intención no clara → repetir menú
   await sendMessage(phone,
     `No entendí tu selección. Por favor elige una opción:\n\n` +
     `*1.* 📦 Cotizar productos\n` +
     `*2.* 👤 Contactar con un ejecutivo`
   );
+}
+
+// Clasifica un mensaje ambiguo del menú inicial en: cotizar | contacto | ninguno.
+// Usa Claude solo cuando las regex no dieron match, para no perder al cliente.
+async function clasificarIntencion(text) {
+  if (!anthropicClient) return "ninguno";
+  try {
+    const response = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 10,
+      system:
+        `Clasifica el mensaje de un cliente de CINTEC (productos de limpieza industrial) que está en el menú inicial. ` +
+        `Responde UNA sola palabra:\n` +
+        `"cotizar" si quiere comprar, cotizar o pregunta por productos (ej: "necesito algo pa limpiar la bodega", "venden cloro?").\n` +
+        `"contacto" si quiere hablar con una persona, tiene un reclamo, consulta de factura/pedido/horario, o soporte.\n` +
+        `"ninguno" si es un saludo vacío, spam o algo incomprensible.\n` +
+        `Solo responde: cotizar, contacto o ninguno.`,
+      messages: [{ role: "user", content: text.slice(0, 300) }],
+    });
+    const out = normalizar(response.content[0]?.text || "");
+    if (out.includes("cotizar")) return "cotizar";
+    if (out.includes("contacto")) return "contacto";
+    return "ninguno";
+  } catch (err) {
+    console.error("Error clasificando intención:", err.message);
+    return "ninguno";
+  }
 }
 
 // ─── Flujo de contacto con ejecutivo ─────────────────────────────────────────
