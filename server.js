@@ -483,7 +483,7 @@ async function responderConsulta(phone, session, pregunta) {
       .map(m => ({ role: "user", content: m.text }));
 
     const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-opus-4-8", // conversación real con el cliente — máxima calidad de comprensión
       max_tokens: 250,
       system:
         `Eres el asistente de ventas de CINTEC, empresa chilena de productos de limpieza, higiene y desinfección industrial. ` +
