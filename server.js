@@ -58,6 +58,9 @@ const sessions = {};
 const hidroPendientes  = new Map(); // phone → respuesta del especialista (fallback si sesión expiró)
 const hidroSolicitudes = new Map(); // phone → { sentAt, data, reminderCount } — para recordatorios
 
+// Correo de contacto para derechos de datos personales (Ley 21.719)
+const DATOS_CONTACTO = process.env.DATOS_CONTACTO || "caja@cintecsa.cl";
+
 // ─── Datos bancarios CINTEC (formas de pago) ─────────────────────────────────
 const DATOS_BANCARIOS_WSP =
   `🏦 *Datos para transferencia:*\n\n` +
@@ -639,6 +642,18 @@ async function handleMessage(phone, text) {
     return;
   }
 
+  // ── Comando DATOS: derechos de datos personales (Ley 21.719) ───────────────
+  if (/^(datos|mis datos|privacidad|proteccion de datos|eliminar mis? datos|borrar mis? datos)$/i.test(normalizar(text))) {
+    await sendMessage(phone,
+      `🔒 *Tus datos personales en CINTEC*\n\n` +
+      `Para cotizarte guardamos solo lo necesario: *RUT, nombre, contacto y dirección de entrega*, con el fin de procesar tu cotización y despacho. ` +
+      `No los usamos para publicidad ni los compartimos con terceros ajenos al servicio.\n\n` +
+      `Tienes derecho a *acceder, corregir o eliminar* tu información. Para ejercerlo, escríbenos a *${DATOS_CONTACTO}* indicando tu RUT y qué necesitas.\n\n` +
+      `_Escribe *hola* para volver al menú._`
+    );
+    return;
+  }
+
   // ── Respuesta a seguimiento post-cotización ────────────────────────────────
   let seg = seguimientosPendientes.get(phone);
   if (seg && Date.now() - seg.sentAt > 7 * 24 * 60 * 60 * 1000) {
@@ -724,6 +739,7 @@ async function handleMessage(phone, text) {
     case STEPS.START:
       await sendMessage(phone,
         `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
+        `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
         `¿En qué te podemos ayudar hoy?\n\n` +
         `*1.* 📦 Cotizar productos\n` +
         `*2.* 👤 Contactar con un ejecutivo`
@@ -3061,15 +3077,9 @@ new Chart(document.getElementById('chartMonto'), {
 }
 
 // ─── /reporte — acceso por token (URL anterior sigue funcionando) ─────────────
-app.get("/reporte", (req, res) => {
-  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
-  if (req.query.token !== REPORT_TOKEN) return res.status(401).send("No autorizado.");
-  const nonce = crypto.randomBytes(16).toString("base64");
-  res.setHeader("Content-Security-Policy",
-    `default-src 'none'; script-src 'nonce-${nonce}' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: https:; connect-src 'none'`
-  );
-  res.send(buildKPIPage(nonce, false));
-});
+// /reporte quedó retirado por seguridad: el acceso con token en la URL fue
+// reemplazado por login con usuario y contraseña. Redirige al panel seguro.
+app.get("/reporte", (req, res) => res.redirect(302, "/panel"));
 
 // ─── /panel — acceso con login ────────────────────────────────────────────────
 app.get("/panel/login", (req, res) => {
