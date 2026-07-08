@@ -104,6 +104,38 @@ function guardarLog() {
   catch (err) { console.error("Error guardando log:", err.message); }
 }
 
+// ─── Retención de auditoría: conservar el registro por 6 meses ────────────────
+const RETENCION_MS = 183 * 24 * 60 * 60 * 1000; // ~6 meses
+function purgarLogAntiguo() {
+  const limite = Date.now() - RETENCION_MS;
+  const antes = cotizacionesLog.length;
+  cotizacionesLog = cotizacionesLog.filter(e => {
+    const t = new Date(e.timestamp).getTime();
+    return isNaN(t) || t >= limite; // conserva si la fecha es válida y está dentro de la ventana
+  });
+  if (cotizacionesLog.length !== antes) {
+    console.log(`🗑️  Purga de auditoría: ${antes - cotizacionesLog.length} registros con más de 6 meses eliminados`);
+    guardarLog();
+  }
+}
+setInterval(purgarLogAntiguo, 24 * 60 * 60 * 1000); // revisa a diario
+purgarLogAntiguo(); // al iniciar
+
+// ─── Registro de conversaciones (auditoría interna) ───────────────────────────
+// Guarda cada consulta libre del cliente y la respuesta del asistente inteligente.
+function registrarConsulta(phone, pregunta, respuesta) {
+  if (TEST_PHONES.has(phone)) return; // los números de prueba no generan datos
+  cotizacionesLog.push({
+    id:        `CONS-${Date.now()}`,
+    tipo:      "consulta",
+    timestamp: new Date().toISOString(),
+    phone,
+    pregunta:  (pregunta  || "").slice(0, 500),
+    respuesta: (respuesta || "").slice(0, 1000),
+  });
+  guardarLog();
+}
+
 // ─── Seguimiento post-cotización ──────────────────────────────────────────────
 // phone → { cotId, sentAt } — clientes con seguimiento enviado esperando respuesta
 const seguimientosPendientes = new Map();
@@ -501,6 +533,7 @@ async function responderConsulta(phone, session, pregunta) {
     });
 
     const reply = response.content[0]?.text || "";
+    registrarConsulta(phone, pregunta, reply); // auditoría: pregunta del cliente + respuesta de la IA
     if (/ejecutivo puede ayudarte|estoy aquí para ayudarte con cotizaciones/i.test(reply)) {
       registrarConversacionProblematica(phone, session, "sin_respuesta", { pregunta, respuestaClaude: reply });
     }
@@ -2610,6 +2643,7 @@ function buildKPIPage(nonce, showLogout = false) {
   const contactos     = cotizacionesLog.filter(e => e.tipo === "contacto");
   const problematicas = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
   const comprobantes  = cotizacionesLog.filter(e => e.tipo === "comprobante");
+  const consultas     = cotizacionesLog.filter(e => e.tipo === "consulta");
   const hidroPendientesList = [...hidroSolicitudes.entries()]
     .map(([phone, entry]) => ({
       phone,
@@ -2977,6 +3011,30 @@ tbody tr:hover td{background:#FAFAFA}
     </div>
   </div>
 
+  <!-- ── Registro de conversaciones (auditoría) ── -->
+  <div class="row row-1">
+    <div class="panel" style="grid-column:1/-1">
+      <div class="panel-hdr">
+        <div class="panel-title">📝 Registro de conversaciones${consultas.length > 0 ? ` <span style="background:#3B82F6;color:#fff;padding:2px 10px;border-radius:12px;font-size:12px;margin-left:8px;font-weight:700">${consultas.length}</span>` : ""}</div>
+        <a href="/panel/export" style="font-size:12px;color:#3B82F6;text-decoration:none;font-weight:600;border:1px solid #3B82F6;padding:5px 12px;border-radius:7px">⬇ Exportar CSV</a>
+      </div>
+      ${consultas.length === 0 ? `<div class="empty">Sin consultas registradas aún</div>` : `
+      <table>
+        <thead><tr><th>Fecha</th><th>WhatsApp</th><th>Consulta del cliente</th><th>Respuesta del bot</th></tr></thead>
+        <tbody>
+        ${[...consultas].reverse().slice(0, 25).map(c => `
+          <tr>
+            <td style="color:#94A3B8;white-space:nowrap">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</td>
+            <td style="color:#94A3B8">+${escapeHtml(c.phone)}</td>
+            <td style="max-width:240px">${escapeHtml(c.pregunta || "–")}</td>
+            <td style="max-width:340px;color:#94A3B8;font-size:13px">${escapeHtml(c.respuesta || "–")}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+      <div style="margin-top:10px;font-size:11px;color:#64748B">Se conservan por 6 meses. Mostrando las 25 más recientes de ${consultas.length}. Exporta para el registro completo.</div>`}
+    </div>
+  </div>
+
   <!-- ── Fila 6: Contactos + Problemáticas ── -->
   <div class="row row-2">
     <div class="panel">
@@ -3160,6 +3218,27 @@ app.get("/panel", (req, res) => {
 app.get("/panel/logout", (req, res) => {
   clearPanelSession(req, res);
   res.redirect("/panel/login");
+});
+
+// Exportar el registro de conversaciones a CSV (auditoría interna) — requiere login
+app.get("/panel/export", (req, res) => {
+  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (!getPanelSession(req)) return res.redirect("/panel/login");
+
+  const consultas = cotizacionesLog.filter(e => e.tipo === "consulta");
+  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`; // escape CSV
+  const filas = consultas.map(c => [
+    new Date(c.timestamp).toLocaleString("es-CL", { timeZone: "America/Santiago" }),
+    "+" + (c.phone || ""),
+    c.pregunta  || "",
+    c.respuesta || "",
+  ].map(esc).join(","));
+  const csv = "﻿" + ["Fecha,WhatsApp,Consulta del cliente,Respuesta del bot", ...filas].join("\r\n");
+
+  const fecha = new Date().toISOString().slice(0, 10);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="registro-conversaciones-${fecha}.csv"`);
+  res.send(csv);
 });
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
