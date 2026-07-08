@@ -473,6 +473,16 @@ function esUnaConsulta(text) {
     .test(normalizar(text));
 }
 
+// Detecta un mensaje que claramente NO es el dato pedido, sino una pregunta o
+// pedido fuera de tema (para reencauzar con amabilidad en pasos de captura de datos).
+// Se usa solo donde el dato esperado tiene forma distintiva (RUT = dígitos, correo = @).
+function pareceFueraDeTema(text) {
+  const t = normalizar(text);
+  const palabras = t.split(/\s+/).filter(Boolean);
+  const digitos  = (t.match(/\d/g) || []).length;
+  return t.includes("?") || (palabras.length >= 3 && digitos < 4);
+}
+
 // Busca en el catálogo productos relacionados con la pregunta (solo nombres, sin precios)
 // para que Claude responda con productos reales de CINTEC en vez de inventar.
 async function buscarContextoCatalogo(session, pregunta) {
@@ -825,7 +835,11 @@ async function handleMessage(phone, text) {
       // Si el texto tiene menos de 6 dígitos no puede ser un RUT — el cliente escribió otra cosa
       const digitosEnTexto = (text.match(/\d/g) || []).length;
       if (digitosEnTexto < 6) {
+        const reencauce = pareceFueraDeTema(text)
+          ? `😊 Estoy aquí solo para ayudarte con *cotizaciones de CINTEC*.\n\n`
+          : "";
         await sendMessage(phone,
+          reencauce +
           `Para comenzar necesito tu RUT. 😊\n\n` +
           `Si tienes *RUT de empresa*, ingrésalo.\n` +
           `De lo contrario, ingresa tu *RUT personal*.\n\n` +
@@ -924,7 +938,10 @@ async function handleMessage(phone, text) {
 
     case STEPS.WAITING_EMAIL:
       if (!text.includes("@") || !text.includes(".")) {
-        await sendMessage(phone, `⚠️ Ingresa un correo electrónico válido.`);
+        const reencauceMail = pareceFueraDeTema(text)
+          ? `😊 Estoy aquí solo para ayudarte con tu cotización de CINTEC.\n\n`
+          : "";
+        await sendMessage(phone, reencauceMail + `📧 Ingresa un *correo electrónico válido* para enviarte la cotización.`);
         break;
       }
       session.data.emailCliente = text.toLowerCase();
