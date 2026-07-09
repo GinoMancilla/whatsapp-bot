@@ -147,10 +147,30 @@ for (const c of cotizacionesLog) {
   }
 }
 
+// ─── Folio correlativo legible: WSP-2026-0001 ────────────────────────────────
+// Prefijo propio (WSP) para NO chocar con los folios del ERP de CINTEC.
+const foliosReservados = new Set(); // evita duplicados entre el momento de emitir y registrar
+function generarFolio() {
+  const prefijo = `WSP-${new Date().getFullYear()}-`;
+  let max = 0;
+  const considerar = (f) => {
+    if (typeof f === "string" && f.startsWith(prefijo)) {
+      const n = parseInt(f.slice(prefijo.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  };
+  for (const e of cotizacionesLog) if (e.tipo === "cotizacion") considerar(e.folio);
+  for (const f of foliosReservados) considerar(f);
+  const folio = prefijo + String(max + 1).padStart(4, "0");
+  foliosReservados.add(folio);
+  return folio;
+}
+
 function registrarCotizacion(phone, data) {
   if (TEST_PHONES.has(phone)) return;
   cotizacionesLog.push({
     id:            `COT-${Date.now()}`,
+    folio:         data.folio || "",
     tipo:          "cotizacion",
     timestamp:     new Date().toISOString(),
     phone,
@@ -726,6 +746,29 @@ async function handleMessage(phone, text) {
       `_Escribe *hola* para volver al menú._`
     );
     return;
+  }
+
+  // ── Confirmación: a qué cotización corresponde el comprobante enviado ──────
+  const compPend = comprobantesPendientes.get(phone);
+  if (compPend) {
+    const max = compPend.candidatos.length;
+    const num = parseInt(text.trim(), 10);
+    if (!isNaN(num) && num >= 1 && num <= max) {
+      comprobantesPendientes.delete(phone);
+      await finalizarComprobante(phone, compPend, compPend.candidatos[num - 1]);
+      return;
+    }
+    if (/^(hola|menu|nueva|inicio|cotizar)$/i.test(normalizar(text))) {
+      // El cliente cambió de tema: no lo dejamos atrapado ni perdemos el comprobante
+      comprobantesPendientes.delete(phone);
+      await finalizarComprobante(phone, compPend, compPend.candidatos[0], true);
+      // y seguimos con el flujo normal de su mensaje
+    } else {
+      await sendMessage(phone,
+        `⚠️ Responde con el *número* de la cotización a la que corresponde tu pago (1 a ${max}).`
+      );
+      return;
+    }
   }
 
   // ── Respuesta a seguimiento post-cotización ────────────────────────────────
@@ -1903,6 +1946,8 @@ async function enviarCotizacionCompleta(phone, data) {
     const resend      = resendClient;
     const fecha       = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
     const confirmados = data.productosConfirmados;
+    const folio       = generarFolio(); // número visible para cliente y para caja
+    data.folio        = folio;
 
     let filas = "";
     let total = 0;
@@ -1923,10 +1968,11 @@ async function enviarCotizacionCompleta(phone, data) {
       <div style="font-family:Arial,sans-serif; max-width:650px; margin:auto; padding:24px; border:1px solid #e0e0e0; border-radius:8px;">
         <div style="background:#c0392b; padding:16px; border-radius:8px 8px 0 0; text-align:center;">
           <h2 style="color:white; margin:0;">COTIZACIÓN CINTEC</h2>
+          <div style="color:#fff; font-size:15px; letter-spacing:1px; margin-top:6px; opacity:.95;">N° ${escapeHtml(folio)}</div>
         </div>
         <div style="padding:20px;">
           <p>Estimado/a <strong>${escapeHtml(data.razonSocial)}</strong>,</p>
-          <p><strong>Fecha:</strong> ${fecha} &nbsp; <strong>RUT:</strong> ${data.rut ? escapeHtml(data.rut) : "Por confirmar"}</p>
+          <p><strong>Folio:</strong> ${escapeHtml(folio)} &nbsp; <strong>Fecha:</strong> ${fecha} &nbsp; <strong>RUT:</strong> ${data.rut ? escapeHtml(data.rut) : "Por confirmar"}</p>
           ${data.esClienteNuevo ? '<p><em>Precios según lista vigente.</em></p>' : ''}
           <table style="width:100%; border-collapse:collapse; margin-top:10px;">
             <tr style="background:#c0392b; color:white;">
@@ -1956,15 +2002,16 @@ async function enviarCotizacionCompleta(phone, data) {
     await resend.emails.send({
       from: "CINTEC <onboarding@resend.dev>",
       to: data.emailCliente,
-      subject: `Cotización CINTEC - ${fecha}`,
+      subject: `Cotización CINTEC ${folio}`,
       html: htmlCotizacion,
     });
 
     await resend.emails.send({
       from: "Bot CINTEC <onboarding@resend.dev>",
       to: DESTINATION_EMAIL,
-      subject: `📦 Cotización enviada - ${data.razonSocial}${data.sinRut ? " (SIN RUT)" : data.esClienteNuevo ? " (CLIENTE NUEVO)" : ""}`,
+      subject: `📦 Cotización ${folio} - ${data.razonSocial}${data.sinRut ? " (SIN RUT)" : data.esClienteNuevo ? " (CLIENTE NUEVO)" : ""}`,
       html: `<h2 style="color:#c0392b;">📲 Cotización enviada vía WhatsApp</h2>
+        <p><strong>Folio:</strong> ${escapeHtml(folio)}</p>
         <p><strong>Cliente:</strong> ${escapeHtml(data.razonSocial)} | RUT: ${data.rut ? escapeHtml(data.rut) : `<span style="color:#e74c3c;font-weight:bold">⚠️ SIN RUT — solicitar al facturar</span>`}</p>
         <p><strong>Email:</strong> ${escapeHtml(data.emailCliente)} | WhatsApp: +${escapeHtml(phone)}</p>
         <p><strong>Tipo:</strong> ${data.esClienteNuevo ? "🆕 Cliente nuevo (Precio Lista)" : "✅ Cliente existente"}</p>
@@ -1974,7 +2021,7 @@ async function enviarCotizacionCompleta(phone, data) {
 
     registrarCotizacion(phone, data);
     await sendMessage(phone,
-      `✅ ¡Listo! Tu cotización fue enviada a *${data.emailCliente}*.\n\n` +
+      `✅ ¡Listo! Tu cotización *${folio}* fue enviada a *${data.emailCliente}*.\n\n` +
       `¡Gracias por preferirnos! Escribe *hola* si necesitas algo más. 🙏`
     );
     await sendMessage(phone,
@@ -1982,7 +2029,7 @@ async function enviarCotizacionCompleta(phone, data) {
       `1️⃣ Transferencia bancaria\n` +
       `2️⃣ Pago contra factura (clientes con crédito aprobado)\n\n` +
       DATOS_BANCARIOS_WSP + `\n\n` +
-      `Cuando realices el pago, *envía el comprobante por este mismo chat* 📎 y nuestro equipo lo validará.`
+      `Cuando realices el pago, *envía el comprobante por este mismo chat* 📎 indicando el folio *${folio}*, y nuestro equipo lo validará.`
     );
     console.log(`📧 Cotización enviada a ${data.emailCliente}`);
   } catch (err) {
@@ -1992,6 +2039,96 @@ async function enviarCotizacionCompleta(phone, data) {
 }
 
 // ─── Comprobante de pago (imagen/documento por WhatsApp) ─────────────────────
+// Comprobantes esperando que el cliente confirme a qué cotización corresponden
+const comprobantesPendientes = new Map(); // phone → { contenido, filename, mimeType, candidatos, sentAt }
+const COMPROBANTE_TTL = 60 * 60 * 1000;   // 1 h: si no confirma, se asocia la más reciente
+
+// Cotizaciones recientes del cliente que aún no tienen un comprobante asociado
+function cotizacionesPendientesDePago(phone, dias = 60) {
+  const desde  = Date.now() - dias * 24 * 60 * 60 * 1000;
+  const pagadas = new Set(
+    cotizacionesLog.filter(e => e.tipo === "comprobante" && e.cotizacionId).map(e => e.cotizacionId)
+  );
+  const recientes = cotizacionesLog.filter(e =>
+    e.tipo === "cotizacion" && e.phone === phone && new Date(e.timestamp).getTime() >= desde
+  ).reverse(); // más reciente primero
+  const sinPagar = recientes.filter(c => !pagadas.has(c.id));
+  return sinPagar.length > 0 ? sinPagar : recientes;
+}
+
+// Detalle completo de la cotización, para que caja valide sin buscar nada
+function buildDetalleCotizacionHtml(cot) {
+  if (!cot) return `<p style="color:#e74c3c;"><em>⚠️ Sin cotización registrada para este número. Verificar con el cliente.</em></p>`;
+  const filas = (cot.productos || []).map(p => `<tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(p.codigo || "")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(p.descripcion || "")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;">${escapeHtml(String(p.cantidad || 1))} ${escapeHtml(p.unidad || "")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;">$${(p.subtotal || 0).toLocaleString("es-CL")}</td>
+    </tr>`).join("");
+  return `
+    <h3 style="margin:20px 0 4px;color:#333;">📋 Detalle de la cotización ${escapeHtml(cot.folio || cot.id)}</h3>
+    <p style="margin:0 0 10px;color:#666;font-size:13px;">Emitida el ${new Date(cot.timestamp).toLocaleString("es-CL", { timeZone: "America/Santiago" })}</p>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <tr style="background:#f5f5f5;">
+        <th align="left" style="padding:8px;">Código</th><th align="left" style="padding:8px;">Producto</th>
+        <th style="padding:8px;">Cantidad</th><th align="right" style="padding:8px;">Subtotal</th>
+      </tr>
+      ${filas}
+      <tr style="background:#fafafa;font-weight:bold;">
+        <td colspan="3" style="padding:10px;text-align:right;">TOTAL A PAGAR:</td>
+        <td style="padding:10px;text-align:right;color:#c0392b;">$${(cot.total || 0).toLocaleString("es-CL")}</td>
+      </tr>
+    </table>
+    ${cot.direccionEntrega ? `<p style="margin-top:10px;font-size:13px;">📦 <strong>Entrega:</strong> ${escapeHtml(cot.direccionEntrega)}${cot.requiereFlete ? ` <em style="color:#e74c3c;">(flete por cotizar)</em>` : ""}</p>` : ""}`;
+}
+
+// Envía el comprobante a caja, ya asociado a una cotización concreta
+async function finalizarComprobante(phone, archivo, cot, noConfirmado = false) {
+  const session     = sessions[phone];
+  const razonSocial = session?.data?.razonSocial || cot?.razonSocial || "";
+  const rut         = session?.data?.rut         || cot?.rut         || "";
+  const folio       = cot?.folio || cot?.id || "";
+
+  if (resendClient) {
+    const fecha = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+    await resendClient.emails.send({
+      from:    "Bot CINTEC <onboarding@resend.dev>",
+      to:      DESTINATION_EMAIL,
+      subject: `💰 Pago recibido${folio ? ` — ${folio}` : ""} — ${razonSocial || "+" + phone}`,
+      html: `<h2 style="color:#c0392b;">💰 Comprobante de pago recibido vía WhatsApp</h2>
+        <p><strong>Fecha de recepción:</strong> ${fecha}</p>
+        <p><strong>Cliente:</strong> ${escapeHtml(razonSocial || "–")} | RUT: ${escapeHtml(rut || "–")}</p>
+        <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
+        ${noConfirmado ? `<p style="color:#e67e22;"><strong>⚠️ El cliente no confirmó a qué cotización corresponde.</strong> Se asocia la más reciente — verificar.</p>` : ""}
+        ${buildDetalleCotizacionHtml(cot)}
+        <p style="margin-top:16px;">El comprobante viene adjunto. Validar el pago y confirmar al cliente.</p>`,
+      attachments: [{ filename: archivo.filename, content: archivo.contenido }],
+    });
+  }
+
+  // El cliente pagó → cancelar seguimiento pendiente
+  seguimientosPendientes.delete(phone);
+  if (cot && cot.seguimientoEnviado && !cot.respuestaSeguimiento) {
+    cot.respuestaSeguimiento = "pago_recibido";
+    guardarLog();
+  }
+
+  registrarComprobante(phone, {
+    razonSocial, rut,
+    filename: archivo.filename,
+    mimeType: archivo.mimeType,
+    cotizacionId:    cot?.id    || "",
+    folioCotizacion: cot?.folio || "",
+    totalCotizacion: cot?.total || 0,
+  });
+
+  await sendMessage(phone,
+    `✅ *Recibimos tu comprobante de pago.*${folio ? `\n\nQuedó asociado a la cotización *${folio}*.` : ""}\n\n` +
+    `Nuestro equipo validará la transferencia y te confirmaremos a la brevedad por este medio. 🙏`
+  );
+  console.log(`💰 Comprobante recibido de +${phone} (${archivo.filename})${folio ? ` → ${folio}` : ""}`);
+}
+
 async function manejarComprobante(phone, msg) {
   try {
     const media   = msg.type === "image" ? msg.image : msg.document;
@@ -2011,55 +2148,46 @@ async function manejarComprobante(phone, msg) {
       responseType: "arraybuffer",
       maxContentLength: 15 * 1024 * 1024,
     });
+    const archivo = { contenido: Buffer.from(file.data).toString("base64"), filename, mimeType };
 
-    // Contexto del cliente: sesión activa o su última cotización registrada
-    const session   = sessions[phone];
-    const ultimaCot = [...cotizacionesLog].reverse().find(e => e.tipo === "cotizacion" && e.phone === phone);
-    const razonSocial = session?.data?.razonSocial || ultimaCot?.razonSocial || "";
-    const rut         = session?.data?.rut         || ultimaCot?.rut         || "";
-
-    // 3. Reenviar a caja/ejecutivo con el archivo adjunto
-    if (resendClient) {
-      const fecha = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
-      await resendClient.emails.send({
-        from:    "Bot CINTEC <onboarding@resend.dev>",
-        to:      DESTINATION_EMAIL,
-        subject: `💰 Comprobante de pago recibido — ${razonSocial || "+" + phone}`,
-        html: `<h2 style="color:#c0392b;">💰 Comprobante de pago recibido vía WhatsApp</h2>
-          <p><strong>Fecha:</strong> ${fecha}</p>
-          <p><strong>Cliente:</strong> ${escapeHtml(razonSocial || "–")} | RUT: ${escapeHtml(rut || "–")}</p>
-          <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
-          ${ultimaCot ? `<p><strong>Última cotización:</strong> ${escapeHtml(ultimaCot.id)} por $${(ultimaCot.total || 0).toLocaleString("es-CL")} (${new Date(ultimaCot.timestamp).toLocaleString("es-CL", { timeZone: "America/Santiago" })})</p>` : `<p><em>Sin cotización previa registrada para este número.</em></p>`}
-          <p>El comprobante viene adjunto. Validar el pago y confirmar al cliente.</p>`,
-        attachments: [{ filename, content: Buffer.from(file.data).toString("base64") }],
+    // 3. ¿A qué cotización corresponde este pago?
+    const candidatos = cotizacionesPendientesDePago(phone);
+    if (candidatos.length > 1) {
+      const opciones = candidatos.slice(0, 5);
+      comprobantesPendientes.set(phone, { ...archivo, candidatos: opciones, sentAt: Date.now() });
+      let m = `📎 *Recibimos tu comprobante.*\n\n¿A cuál de tus cotizaciones corresponde este pago?\n\n`;
+      opciones.forEach((c, i) => {
+        const f = new Date(c.timestamp).toLocaleDateString("es-CL", { timeZone: "America/Santiago", day: "2-digit", month: "2-digit" });
+        m += `*${i + 1}.* ${c.folio || c.id} — $${(c.total || 0).toLocaleString("es-CL")} _(${f})_\n`;
       });
+      m += `\nResponde con el *número* de la cotización.`;
+      await sendMessage(phone, m);
+      return;
     }
 
-    // El cliente pagó → cancelar seguimiento pendiente de esa cotización
-    seguimientosPendientes.delete(phone);
-    if (ultimaCot && ultimaCot.seguimientoEnviado && !ultimaCot.respuestaSeguimiento) {
-      ultimaCot.respuestaSeguimiento = "pago_recibido";
-      guardarLog();
-    }
-
-    registrarComprobante(phone, {
-      razonSocial, rut, filename, mimeType,
-      cotizacionId:    ultimaCot?.id    || "",
-      totalCotizacion: ultimaCot?.total || 0,
-    });
-    await sendMessage(phone,
-      `✅ *Recibimos tu comprobante de pago.*\n\n` +
-      `Nuestro equipo validará la transferencia y te confirmaremos a la brevedad por este medio. 🙏`
-    );
-    console.log(`💰 Comprobante recibido de +${phone} (${filename})`);
+    await finalizarComprobante(phone, archivo, candidatos[0] || null);
   } catch (err) {
     console.error("Error procesando comprobante:", err.response?.data || err.message);
     await sendMessage(phone,
       `⚠️ No pudimos procesar el archivo. Intenta enviarlo nuevamente ` +
-      `o mándalo por correo a *caja@cintecsa.cl*.`
+      `o mándalo por correo a *${DATOS_CONTACTO}*.`
     );
   }
 }
+
+// Si el cliente no confirma en 1 h, se asocia la cotización más reciente (no se pierde el pago)
+setInterval(async () => {
+  const ahora = Date.now();
+  for (const [phone, p] of comprobantesPendientes) {
+    if (ahora - p.sentAt < COMPROBANTE_TTL) continue;
+    comprobantesPendientes.delete(phone);
+    try {
+      await finalizarComprobante(phone, p, p.candidatos[0] || null, true);
+    } catch (err) {
+      console.error(`Error cerrando comprobante pendiente de ${phone}:`, err.message);
+    }
+  }
+}, 10 * 60 * 1000);
 
 // ─── Notificar respuesta a seguimiento ────────────────────────────────────────
 async function notificarSeguimientoInteresado(phone, cot, mensaje) {
@@ -3011,10 +3139,11 @@ tbody tr:hover td{background:#FAFAFA}
       </div>
       ${cotizaciones.length === 0 ? `<div class="empty">Sin cotizaciones registradas aún</div>` : `
       <table>
-        <thead><tr><th>Fecha</th><th>Cliente</th><th>RUT</th><th>Tipo</th><th style="text-align:right">Total</th><th>Email</th><th>Seguimiento</th></tr></thead>
+        <thead><tr><th>Folio</th><th>Fecha</th><th>Cliente</th><th>RUT</th><th>Tipo</th><th style="text-align:right">Total</th><th>Email</th><th>Seguimiento</th></tr></thead>
         <tbody>
         ${[...cotizaciones].reverse().slice(0, 20).map(c => `
           <tr>
+            <td style="font-family:monospace;font-size:11px;color:#3B82F6;font-weight:700;white-space:nowrap">${escapeHtml(c.folio || "–")}</td>
             <td style="color:#94A3B8;white-space:nowrap">${new Date(c.timestamp).toLocaleString("es-CL",{timeZone:"America/Santiago",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</td>
             <td style="font-weight:600">${escapeHtml(c.razonSocial || "–")}</td>
             <td style="color:#94A3B8">${c.rut ? escapeHtml(c.rut) : `<span class="tag tag-loop">SIN RUT</span>`}</td>
@@ -3079,7 +3208,7 @@ tbody tr:hover td{background:#FAFAFA}
             <td style="color:#94A3B8">${escapeHtml(c.rut || "–")}</td>
             <td style="color:#94A3B8">+${escapeHtml(c.phone)}</td>
             <td style="font-size:11px">${escapeHtml(c.archivo || "–")}</td>
-            <td>${c.cotizacionId ? `${escapeHtml(c.cotizacionId)} · $${(c.totalCotizacion || 0).toLocaleString("es-CL")}` : "–"}</td>
+            <td>${(c.folioCotizacion || c.cotizacionId) ? `<span style="font-family:monospace;color:#3B82F6;font-weight:700">${escapeHtml(c.folioCotizacion || c.cotizacionId)}</span> · $${(c.totalCotizacion || 0).toLocaleString("es-CL")}` : `<span class="tag tag-loop">Sin cotización</span>`}</td>
           </tr>`).join("")}
         </tbody>
       </table>`}
