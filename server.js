@@ -483,6 +483,35 @@ function pareceFueraDeTema(text) {
   return t.includes("?") || (palabras.length >= 3 && digitos < 4);
 }
 
+// Cuando la búsqueda por palabras no encuentra nada, la IA propone sinónimos técnicos
+// (ej: "algo para sacar grasa" → "desengrasante, limpiador"). La IA NO inventa productos:
+// solo sugiere palabras; el catálogo real decide qué existe.
+async function sugerirTerminosBusqueda(nombreProducto) {
+  if (!anthropicClient) return [];
+  try {
+    const response = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 40,
+      system:
+        `Eres experto en productos de limpieza, higiene y desinfección industrial. ` +
+        `El cliente pide un producto. Devuelve entre 2 y 4 palabras clave en español, separadas por coma, ` +
+        `que probablemente aparezcan en el NOMBRE de ese producto dentro de un catálogo ` +
+        `(ej: para "algo para sacar grasa" responde "desengrasante, limpiador, detergente"). ` +
+        `Usa solo sustantivos de producto, sin marcas, cantidades ni adjetivos. ` +
+        `Responde SOLO las palabras separadas por coma, nada más.`,
+      messages: [{ role: "user", content: nombreProducto.slice(0, 100) }],
+    });
+    return normalizar(response.content[0]?.text || "")
+      .split(/[,\n]/)
+      .map(s => s.trim())
+      .filter(s => s.length > 3 && !STOP_WORDS_ENVASE.has(s))
+      .slice(0, 4);
+  } catch (err) {
+    console.error("Error sugiriendo términos de búsqueda:", err.message);
+    return [];
+  }
+}
+
 // Busca en el catálogo productos relacionados con la pregunta (solo nombres, sin precios)
 // para que Claude responda con productos reales de CINTEC en vez de inventar.
 async function buscarContextoCatalogo(session, pregunta) {
@@ -565,6 +594,8 @@ const STOP_WORDS_ENVASE = new Set([
   "unidad", "unidades",
   // Palabras de intención (por si no se stripearon en el parser)
   "necesito", "quiero", "quisiera", "dame", "busco", "requiero", "preciso",
+  // Sustantivos genéricos: no aportan a la búsqueda ("un producto desengrasante")
+  "producto", "productos", "articulo", "articulos", "item", "items",
 ]);
 
 // Convierte "talla m/l/s/xl" → notación catálogo "t/m"/"t/l"/etc.
@@ -1260,7 +1291,29 @@ async function buscarParaClienteNuevo(phone, session, item) {
       return;
     }
 
-    // Sin resultados ni parciales → derivar a representante
+    // Rescate con IA: pedir sinónimos técnicos y volver a buscar en el catálogo real.
+    // La IA solo aporta palabras; los productos mostrados siempre salen del catálogo.
+    const terminos = await sugerirTerminosBusqueda(item.nombre);
+    if (terminos.length > 0) {
+      const vistosIA = new Set();
+      const porIA = [];
+      for (const t of terminos) {
+        for (const p of buscarEnCatalogo(session.data.rows, [t])) {
+          if (!vistosIA.has(p.CodProd)) { vistosIA.add(p.CodProd); porIA.push(p); }
+        }
+        if (porIA.length >= 4) break;
+      }
+      if (porIA.length > 0) {
+        await sendMessage(phone,
+          `ℹ️ No encontré _"${item.nombre}"_ con ese nombre exacto.\n` +
+          `Pero estas opciones de nuestro catálogo podrían servirte:`
+        );
+        await mostrarOpcionesProducto(phone, session, porIA.slice(0, 4), item);
+        return;
+      }
+    }
+
+    // Sin resultados ni siquiera con sinónimos → derivar a representante
     session.data.productosNoEncontrados.push(item.nombre);
     await sendMessage(phone,
       `ℹ️ No encontré _"${item.nombre}"_ en nuestro catálogo.\n` +
@@ -1768,6 +1821,11 @@ function parsearProductos(texto) {
 
     // Limpiar prefijos de cantidad+envase: "una caja de X" → "X", "un bidón de X" → "X"
     parte = parte.replace(/^(un[ao]?s?|dos|tres|cuatro|cinco)\s+(caja|bidon|bidones|bolsa|saco|frasco|tarro|balde|tambor|galon|envase|botella|paquete|sobre)s?\s+(de\s+)?/i, '').trim();
+
+    // Limpiar sustantivos genéricos: "un producto desengrasante" → "desengrasante"
+    // Solo si queda algo útil después (no vaciar un pedido que era solo "producto")
+    const sinGenerico = parte.replace(/^(un[ao]?s?\s+)?(producto|art[ií]culo|[ií]tem)s?\s+(de\s+|para\s+)?/i, '').trim();
+    if (sinGenerico.length > 2) parte = sinGenerico;
 
     // Extraer formato inline "x 5lt", "formato 5 lt", "x 10kg", etc.
     let formatoEspecificado = null;
