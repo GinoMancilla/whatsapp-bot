@@ -3,6 +3,7 @@ node_modules/
 .env.*
 !env.example.env
 cotizaciones.json
+backups/
 
 # Archivos generados en sesiones de trabajo
 .playwright-mcp/

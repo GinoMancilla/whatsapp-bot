@@ -121,6 +121,48 @@ function purgarLogAntiguo() {
 setInterval(purgarLogAntiguo, 24 * 60 * 60 * 1000); // revisa a diario
 purgarLogAntiguo(); // al iniciar
 
+// ─── Respaldo automático (durabilidad off-site) ───────────────────────────────
+// El sistema de archivos de Railway es efímero: se borra en cada deploy. El respaldo
+// por correo es la copia durable real; la copia local ayuda dentro del ciclo de deploy.
+const RESPALDO_DIR = process.env.BACKUP_DIR || "./backups";
+let ultimoRespaldoHash = "";
+async function crearRespaldo(motivo = "diario") {
+  try {
+    if (!cotizacionesLog || cotizacionesLog.length === 0) return; // nada que respaldar
+    const contenido = JSON.stringify(cotizacionesLog, null, 2);
+    const hash = crypto.createHash("sha256").update(contenido).digest("hex");
+    if (hash === ultimoRespaldoHash) return; // sin cambios desde el último respaldo
+    const fechaTag = new Date().toISOString().slice(0, 10);
+
+    // 1. Copia local rotativa (últimas 7)
+    try {
+      if (!fs.existsSync(RESPALDO_DIR)) fs.mkdirSync(RESPALDO_DIR, { recursive: true });
+      fs.writeFileSync(`${RESPALDO_DIR}/cotizaciones-${fechaTag}.json`, contenido);
+      const previos = fs.readdirSync(RESPALDO_DIR).filter(f => f.startsWith("cotizaciones-")).sort();
+      while (previos.length > 7) fs.unlinkSync(`${RESPALDO_DIR}/${previos.shift()}`);
+    } catch (e) { console.error("Respaldo local falló:", e.message); }
+
+    // 2. Copia off-site por correo (la durable ante el fs efímero de Railway)
+    if (resendClient && DESTINATION_EMAIL) {
+      await resendClient.emails.send({
+        from: "Bot CINTEC <onboarding@resend.dev>",
+        to: DESTINATION_EMAIL,
+        subject: `🗄️ Respaldo bot CINTEC — ${fechaTag} (${cotizacionesLog.length} registros)`,
+        html: `<p>Respaldo automático del registro del bot (${escapeHtml(motivo)}).</p>
+          <p><strong>Fecha:</strong> ${new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" })}</p>
+          <p><strong>Registros:</strong> ${cotizacionesLog.length}</p>
+          <p>El archivo <code>cotizaciones.json</code> viene adjunto. Guárdalo como copia de seguridad.</p>`,
+        attachments: [{ filename: `cotizaciones-${fechaTag}.json`, content: Buffer.from(contenido).toString("base64") }],
+      });
+      console.log(`🗄️  Respaldo enviado por correo (${cotizacionesLog.length} registros, ${motivo})`);
+    }
+    ultimoRespaldoHash = hash;
+  } catch (err) {
+    console.error("Error creando respaldo:", err.message);
+  }
+}
+setInterval(() => crearRespaldo("diario"), 24 * 60 * 60 * 1000); // respaldo diario automático
+
 // ─── Registro de conversaciones (auditoría interna) ───────────────────────────
 // Guarda cada consulta libre del cliente y la respuesta del asistente inteligente.
 function registrarConsulta(phone, pregunta, respuesta) {
@@ -3220,7 +3262,10 @@ tbody tr:hover td{background:#FAFAFA}
     <div class="panel" style="grid-column:1/-1">
       <div class="panel-hdr">
         <div class="panel-title">📝 Registro de conversaciones${consultas.length > 0 ? ` <span style="background:#3B82F6;color:#fff;padding:2px 10px;border-radius:12px;font-size:12px;margin-left:8px;font-weight:700">${consultas.length}</span>` : ""}</div>
-        <a href="/panel/export" style="font-size:12px;color:#3B82F6;text-decoration:none;font-weight:600;border:1px solid #3B82F6;padding:5px 12px;border-radius:7px">⬇ Exportar CSV</a>
+        <div style="display:flex;gap:8px">
+          <a href="/panel/backup" style="font-size:12px;color:#16A34A;text-decoration:none;font-weight:600;border:1px solid #16A34A;padding:5px 12px;border-radius:7px">🗄️ Respaldar ahora</a>
+          <a href="/panel/export" style="font-size:12px;color:#3B82F6;text-decoration:none;font-weight:600;border:1px solid #3B82F6;padding:5px 12px;border-radius:7px">⬇ Exportar CSV</a>
+        </div>
       </div>
       ${consultas.length === 0 ? `<div class="empty">Sin consultas registradas aún</div>` : `
       <table>
@@ -3443,6 +3488,18 @@ app.get("/panel/export", (req, res) => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="registro-conversaciones-${fecha}.csv"`);
   res.send(csv);
+});
+
+// Descargar el respaldo completo (JSON) ahora mismo — requiere login
+app.get("/panel/backup", (req, res) => {
+  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (!getPanelSession(req)) return res.redirect("/panel/login");
+  const fecha = new Date().toISOString().slice(0, 10);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="respaldo-cotizaciones-${fecha}.json"`);
+  res.send(JSON.stringify(cotizacionesLog, null, 2));
+  // Además dispara un respaldo por correo (copia off-site inmediata)
+  crearRespaldo("manual").catch(() => {});
 });
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
