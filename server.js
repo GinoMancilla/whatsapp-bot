@@ -531,8 +531,11 @@ function stemES(word) {
 // ─── Detección de consultas y respuesta conversacional (Claude) ──────────────
 function esUnaConsulta(text) {
   if (text.includes("?")) return true;
-  return /^(cuantas?|cuantos?|como|que|donde|cual|tienen|hay|venden|viene|incluyen?|trae[n]?|mandan|traen|cuesta[n]?|precio|disponible|se vende|entregan|despachan|incluye)/i
-    .test(normalizar(text));
+  const t = normalizar(text);
+  // Empieza con una forma de pregunta / consulta de disponibilidad o recomendación
+  if (/^(cuantas?|cuantos?|como|que|qué|donde|cual|cuál|tienen|tienes|tiene|hay|venden|vende|viene|incluyen?|trae[n]?|mandan|traen|cuesta[n]?|precio|disponible|se vende|entregan|despachan|incluye|sirve|recomien|algun|alguna|algo|puedo|me sirve|necesito algo|busco algo|quiero algo)/i.test(t)) return true;
+  // Frases de intención de recomendación / características en cualquier parte
+  return /\b(biodegradable|ecologic|recomien|me sirve|sirve para|apto para|algo para (limpiar|lavar|desinfectar|sacar|quitar))\b/i.test(t);
 }
 
 // Detecta un mensaje que claramente NO es el dato pedido, sino una pregunta o
@@ -3500,6 +3503,23 @@ app.get("/panel/backup", (req, res) => {
   res.send(JSON.stringify(cotizacionesLog, null, 2));
   // Además dispara un respaldo por correo (copia off-site inmediata)
   crearRespaldo("manual").catch(() => {});
+});
+
+// Diagnóstico de la IA — confirma que la clave responde (protegido por token)
+app.get("/diag/ai", async (req, res) => {
+  if (!checkHttpRateLimit(req.ip, 5)) return res.status(429).json({ ok: false, error: "rate limit" });
+  if (req.query.token !== SPECIALIST_TOKEN) return res.status(401).json({ ok: false, error: "no autorizado" });
+  if (!anthropicClient) return res.json({ ok: false, motivo: "anthropicClient es null — falta ANTHROPIC_API_KEY" });
+  try {
+    const r = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 10,
+      messages: [{ role: "user", content: "Responde exactamente: OK" }],
+    });
+    res.json({ ok: true, modelo: r.model, respuesta: r.content[0]?.text || "" });
+  } catch (err) {
+    res.json({ ok: false, error: err.message, status: err.status || err.statusCode || null });
+  }
 });
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
