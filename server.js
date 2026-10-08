@@ -3522,6 +3522,75 @@ app.get("/diag/ai", async (req, res) => {
   }
 });
 
+// ─── Política de privacidad (Ley 21.719 + requisito de Meta para publicar la app) ──
+app.get("/privacidad", (req, res) => {
+  const hoy = new Date().toLocaleDateString("es-CL", { year: "numeric", month: "long", day: "numeric" });
+  res.type("html").send(`<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Política de Privacidad — CINTEC</title>
+<style>
+ :root{--brand:#0a3d62;--ink:#1a2733;--muted:#5b6b7d;--line:#e3e9f1;--bg:#f6f8fb}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.65}
+ .wrap{max-width:820px;margin:0 auto;padding:40px 22px 64px}
+ header{border-bottom:3px solid var(--brand);padding-bottom:16px;margin-bottom:24px}
+ h1{margin:0 0 4px;font-size:26px;color:var(--brand)}
+ .sub{color:var(--muted);font-size:14px}
+ h2{color:var(--brand);font-size:18px;margin:28px 0 8px}
+ p,li{font-size:15.5px}
+ ul{padding-left:20px}
+ a{color:var(--brand)}
+ .box{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 22px;box-shadow:0 1px 2px rgba(16,40,70,.05)}
+ footer{margin-top:30px;color:var(--muted);font-size:13px;text-align:center}
+</style></head>
+<body><div class="wrap">
+<header>
+  <h1>Política de Privacidad</h1>
+  <div class="sub">Sociedad Comercial Cintec Limitada — RUT 77.338.250-6 · Actualizada el ${hoy}</div>
+</header>
+<div class="box">
+<p>Esta Política describe cómo <strong>Sociedad Comercial Cintec Limitada</strong> ("CINTEC") trata los datos personales de quienes interactúan con su asistente de WhatsApp para solicitar cotizaciones y contactar al área comercial, conforme a la Ley N° 21.719 sobre Protección de Datos Personales de Chile.</p>
+
+<h2>1. Responsable del tratamiento</h2>
+<p>Sociedad Comercial Cintec Limitada, RUT 77.338.250-6. Contacto para asuntos de datos personales: <a href="mailto:${DATOS_CONTACTO}">${DATOS_CONTACTO}</a>.</p>
+
+<h2>2. Qué datos recopilamos</h2>
+<ul>
+  <li>Datos de identificación y contacto: RUT, nombre o razón social, número de teléfono (WhatsApp) y correo electrónico.</li>
+  <li>Datos de la solicitud: productos consultados, dirección de entrega y detalle de la cotización.</li>
+  <li>Comprobantes de pago que usted envíe voluntariamente.</li>
+  <li>Registro de la conversación con el asistente, para trazabilidad y control de calidad.</li>
+</ul>
+
+<h2>3. Para qué los usamos</h2>
+<ul>
+  <li>Generar y enviar cotizaciones.</li>
+  <li>Gestionar su pedido y coordinar la entrega y el pago.</li>
+  <li>Contactarlo con un ejecutivo comercial cuando lo solicite.</li>
+  <li>Atención al cliente y mejora del servicio.</li>
+</ul>
+<p>No usamos sus datos para publicidad no solicitada ni los vendemos a terceros.</p>
+
+<h2>4. Con quién se comparten</h2>
+<p>Únicamente con proveedores tecnológicos que hacen posible el servicio y que actúan por cuenta de CINTEC: la plataforma de mensajería (WhatsApp/Meta), el proveedor de alojamiento del sistema y el servicio de envío de correos. Algunos de estos proveedores pueden procesar datos fuera de Chile bajo estándares adecuados de protección.</p>
+
+<h2>5. Conservación</h2>
+<p>Conservamos los datos el tiempo necesario para la relación comercial y el cumplimiento de obligaciones legales. El registro de conversaciones se mantiene por un máximo de 6 meses.</p>
+
+<h2>6. Sus derechos</h2>
+<p>Usted puede ejercer sus derechos de <strong>acceso, rectificación, supresión (eliminación) y oposición</strong> sobre sus datos personales. Para ello, escríbanos a <a href="mailto:${DATOS_CONTACTO}">${DATOS_CONTACTO}</a> indicando su RUT y su solicitud. También puede escribir la palabra <strong>"datos"</strong> directamente en el chat del asistente.</p>
+
+<h2>7. Seguridad</h2>
+<p>Aplicamos medidas técnicas y organizativas razonables para proteger su información frente a accesos no autorizados, pérdida o alteración.</p>
+
+<h2>8. Cambios a esta Política</h2>
+<p>Podemos actualizar esta Política. La versión vigente estará siempre disponible en esta misma dirección.</p>
+</div>
+<footer>© ${new Date().getFullYear()} Sociedad Comercial Cintec Limitada · Puerto Montt, Chile</footer>
+</div></body></html>`);
+});
+
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
