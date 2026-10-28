@@ -27,8 +27,9 @@ const {
 
 // Transcripción de audio (notas de voz) — Google AI (Gemini), mismo proveedor que
 // ya se usa para el catálogo (Google Sheets), para minimizar vendors nuevos ante TI.
-// GOOGLE_AI_MODEL es configurable porque el nombre del modelo cambia con el tiempo.
-const GOOGLE_AI_MODEL = process.env.GOOGLE_AI_MODEL || "gemini-2.0-flash";
+// GOOGLE_AI_MODEL es configurable porque el nombre del modelo cambia con el tiempo
+// (gemini-2.0-flash quedó obsoleto en oct-2026; Google recomendó gemini-3.8-flash).
+const GOOGLE_AI_MODEL = process.env.GOOGLE_AI_MODEL || "gemini-3.8-flash";
 if (!GOOGLE_AI_API_KEY) console.warn("⚠️  GOOGLE_AI_API_KEY no configurado — las notas de voz no se transcribirán (se pedirá al cliente que escriba).");
 
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
