@@ -22,7 +22,14 @@ const {
   DESTINATION_EMAIL,
   RESEND_API_KEY,
   GOOGLE_SHEETS_CSV_URL,
+  GOOGLE_AI_API_KEY,
 } = process.env;
+
+// Transcripción de audio (notas de voz) — Google AI (Gemini), mismo proveedor que
+// ya se usa para el catálogo (Google Sheets), para minimizar vendors nuevos ante TI.
+// GOOGLE_AI_MODEL es configurable porque el nombre del modelo cambia con el tiempo.
+const GOOGLE_AI_MODEL = process.env.GOOGLE_AI_MODEL || "gemini-2.0-flash";
+if (!GOOGLE_AI_API_KEY) console.warn("⚠️  GOOGLE_AI_API_KEY no configurado — las notas de voz no se transcribirán (se pedirá al cliente que escriba).");
 
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
 if (!WHATSAPP_APP_SECRET) console.warn("⚠️  WHATSAPP_APP_SECRET no configurado — verificación de firma Meta desactivada. Configúralo en Railway.");
@@ -716,6 +723,12 @@ app.post("/webhook", async (req, res) => {
     if (msg.type === "image" || msg.type === "document") {
       if (!checkRateLimit(from)) return;
       await manejarComprobante(from, msg);
+      return;
+    }
+    // Nota de voz: se transcribe y se procesa como si el cliente lo hubiera escrito
+    if (msg.type === "audio") {
+      if (!checkRateLimit(from)) return;
+      await manejarAudio(from, msg);
       return;
     }
     const text = msg.text?.body?.trim();
@@ -2172,6 +2185,72 @@ async function finalizarComprobante(phone, archivo, cot, noConfirmado = false) {
     `Nuestro equipo validará la transferencia y te confirmaremos a la brevedad por este medio. 🙏`
   );
   console.log(`💰 Comprobante recibido de +${phone} (${archivo.filename})${folio ? ` → ${folio}` : ""}`);
+}
+
+// ─── Notas de voz: transcripción con IA ───────────────────────────────────────
+// Descarga el audio desde Meta y lo transcribe con Google AI (Gemini). El texto
+// resultante se procesa con el MISMO flujo que si el cliente lo hubiera escrito,
+// así toda la máquina de estados (cotización, búsqueda, derivación) reutiliza
+// la lógica existente sin duplicarla.
+async function transcribirAudio(mediaId, mimeTypeOriginal) {
+  if (!GOOGLE_AI_API_KEY || !mediaId) return null;
+  try {
+    // 1. Meta entrega una URL temporal del archivo a partir del media ID
+    const meta = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    });
+    // 2. Descargar el binario (la URL requiere el mismo token)
+    const file = await axios.get(meta.data.url, {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+      responseType: "arraybuffer",
+      maxContentLength: 15 * 1024 * 1024,
+      timeout: 15_000,
+    });
+    const base64Audio = Buffer.from(file.data).toString("base64");
+    // Gemini es estricto con el mime type — WhatsApp manda "audio/ogg; codecs=opus"
+    const mimeType = (mimeTypeOriginal || "audio/ogg").split(";")[0].trim();
+
+    // 3. Pedir la transcripción a Gemini (texto plano, sin interpretación)
+    const resp = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GOOGLE_AI_MODEL}:generateContent?key=${GOOGLE_AI_API_KEY}`,
+      {
+        contents: [{
+          parts: [
+            { text: "Transcribe textualmente en español lo que dice este audio. Responde SOLO con la transcripción, sin comillas ni comentarios adicionales. Si el audio no tiene voz entendible, responde exactamente: [SIN_AUDIO]" },
+            { inline_data: { mime_type: mimeType, data: base64Audio } },
+          ],
+        }],
+        generationConfig: { maxOutputTokens: 300 },
+      },
+      { timeout: 20_000 }
+    );
+
+    const texto = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!texto || texto.includes("[SIN_AUDIO]")) return null;
+    return texto;
+  } catch (err) {
+    console.error("Error transcribiendo audio:", err.response?.data || err.message);
+    return null;
+  }
+}
+
+async function manejarAudio(phone, msg) {
+  const mediaId = msg.audio?.id;
+  const texto = await transcribirAudio(mediaId, msg.audio?.mime_type);
+
+  if (texto) {
+    await sendMessage(phone, `🎤 _Escuché: "${texto}"_`);
+    await handleMessage(phone, texto); // reutiliza el flujo normal de texto
+    return;
+  }
+
+  // No se pudo transcribir (sin IA configurada, audio sin voz clara, error de red, etc.)
+  if (!sessions[phone]) sessions[phone] = { step: STEPS.START, data: {} };
+  registrarConversacionProblematica(phone, sessions[phone], "audio_sin_transcribir");
+  await sendMessage(phone,
+    `🎤 Recibimos tu audio, pero no pudimos entenderlo automáticamente.\n\n` +
+    `¿Puedes escribirlo, por favor? Así te ayudo de inmediato. 🙏`
+  );
 }
 
 async function manejarComprobante(phone, msg) {
