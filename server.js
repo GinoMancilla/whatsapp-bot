@@ -28,8 +28,12 @@ const {
 // Transcripción de audio (notas de voz) — Google AI (Gemini), mismo proveedor que
 // ya se usa para el catálogo (Google Sheets), para minimizar vendors nuevos ante TI.
 // GOOGLE_AI_MODEL es configurable porque el nombre del modelo cambia con el tiempo
-// (gemini-2.0-flash quedó obsoleto en oct-2026; Google recomendó gemini-3.8-flash).
-const GOOGLE_AI_MODEL = process.env.GOOGLE_AI_MODEL || "gemini-3.8-flash";
+// (gemini-2.0-flash quedó obsoleto en oct-2026). "flash-lite" es la variante liviana
+// pensada para tareas simples como transcripción — más cupo gratis, menos saturada
+// que el modelo insignia más nuevo. Hay un 2º modelo de respaldo por si el primero
+// no está disponible (404) o está saturado (503) incluso tras reintentar.
+const GOOGLE_AI_MODEL          = process.env.GOOGLE_AI_MODEL          || "gemini-3.1-flash-lite";
+const GOOGLE_AI_MODEL_FALLBACK = process.env.GOOGLE_AI_MODEL_FALLBACK || "gemini-3-flash-preview";
 if (!GOOGLE_AI_API_KEY) console.warn("⚠️  GOOGLE_AI_API_KEY no configurado — las notas de voz no se transcribirán (se pedirá al cliente que escriba).");
 
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
@@ -2211,10 +2215,12 @@ async function transcribirAudio(mediaId, mimeTypeOriginal) {
     // Gemini es estricto con el mime type — WhatsApp manda "audio/ogg; codecs=opus"
     const mimeType = (mimeTypeOriginal || "audio/ogg").split(";")[0].trim();
 
-    // 3. Pedir la transcripción a Gemini (texto plano, sin interpretación)
-    //    Con reintento ante 503 (Google avisa que esos picos son "usualmente temporales")
-    const pedirTranscripcion = () => axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GOOGLE_AI_MODEL}:generateContent?key=${GOOGLE_AI_API_KEY}`,
+    // 3. Pedir la transcripción a Gemini (texto plano, sin interpretación).
+    //    Prueba el modelo principal y, si no está disponible (404) o está
+    //    saturado incluso tras reintentar (503/429), cae al modelo de respaldo —
+    //    así el bot no queda ciego cada vez que Google rota sus modelos.
+    const pedirTranscripcion = (modelo) => axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GOOGLE_AI_API_KEY}`,
       {
         contents: [{
           parts: [
@@ -2227,18 +2233,23 @@ async function transcribirAudio(mediaId, mimeTypeOriginal) {
       { timeout: 20_000 }
     );
 
-    let resp;
-    try {
-      resp = await pedirTranscripcion();
-    } catch (err) {
-      const status = err.response?.status;
-      if (status === 503 || status === 429) {
-        await new Promise(r => setTimeout(r, 2000)); // breve espera y 1 reintento
-        resp = await pedirTranscripcion();
-      } else {
-        throw err;
+    const modelos = [...new Set([GOOGLE_AI_MODEL, GOOGLE_AI_MODEL_FALLBACK])];
+    let resp, ultimoError;
+    for (const modelo of modelos) {
+      try {
+        resp = await pedirTranscripcion(modelo);
+        break;
+      } catch (err) {
+        ultimoError = err;
+        const status = err.response?.status;
+        if (status === 503 || status === 429) {
+          await new Promise(r => setTimeout(r, 2000)); // breve espera y 1 reintento en el mismo modelo
+          try { resp = await pedirTranscripcion(modelo); break; } catch (err2) { ultimoError = err2; }
+        }
+        // 404 u otro error con este modelo → probar el siguiente de la lista
       }
     }
+    if (!resp) throw ultimoError;
 
     const texto = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
     if (!texto || texto.includes("[SIN_AUDIO]")) return null;
