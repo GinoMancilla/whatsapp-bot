@@ -2212,7 +2212,8 @@ async function transcribirAudio(mediaId, mimeTypeOriginal) {
     const mimeType = (mimeTypeOriginal || "audio/ogg").split(";")[0].trim();
 
     // 3. Pedir la transcripción a Gemini (texto plano, sin interpretación)
-    const resp = await axios.post(
+    //    Con reintento ante 503 (Google avisa que esos picos son "usualmente temporales")
+    const pedirTranscripcion = () => axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/${GOOGLE_AI_MODEL}:generateContent?key=${GOOGLE_AI_API_KEY}`,
       {
         contents: [{
@@ -2225,6 +2226,19 @@ async function transcribirAudio(mediaId, mimeTypeOriginal) {
       },
       { timeout: 20_000 }
     );
+
+    let resp;
+    try {
+      resp = await pedirTranscripcion();
+    } catch (err) {
+      const status = err.response?.status;
+      if (status === 503 || status === 429) {
+        await new Promise(r => setTimeout(r, 2000)); // breve espera y 1 reintento
+        resp = await pedirTranscripcion();
+      } else {
+        throw err;
+      }
+    }
 
     const texto = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
     if (!texto || texto.includes("[SIN_AUDIO]")) return null;
