@@ -464,6 +464,7 @@ const STEPS = {
   MENU_INICIO:        "menu_inicio",
   CONTACTO_NOMBRE:    "contacto_nombre",
   CONTACTO_MOTIVO:    "contacto_motivo",
+  ESPERANDO_PRODUCTO: "esperando_producto",
   WAITING_RUT:        "waiting_rut",
   WAITING_RAZON:      "waiting_razon",
   WAITING_PRODUTOS:   "waiting_productos",
@@ -979,6 +980,28 @@ async function handleMessage(phone, text) {
       await manejarMenuInicio(phone, session, text);
       break;
 
+    case STEPS.ESPERANDO_PRODUCTO: {
+      // Esperábamos saber cuál producto le interesa (tras una mención vaga).
+      // Si viene con el link de la web lo extraemos; si no, usamos su texto
+      // tal cual como término de búsqueda — en ambos casos lo recordamos para
+      // no volver a preguntarlo cuando lleguemos a buscar en el catálogo.
+      const producto = extraerProductoDeLink(text) || (text.trim().length >= 3 ? text.trim() : null);
+      if (!producto) {
+        await sendMessage(phone, `📦 Cuéntame el nombre del producto, o pégame el link de la página.`);
+        break;
+      }
+      session.data.productoDesdeLink = producto;
+      await sendMessage(phone,
+        `¡Perfecto, *${producto}*! Para cotizarte necesito algunos datos.\n\n` +
+        `Si tienes *RUT de empresa*, ingrésalo.\n` +
+        `De lo contrario, ingresa tu *RUT personal*.\n\n` +
+        `_Ej empresa: 76.123.456-7_\n` +
+        `_Ej personal: 12.345.678-9_`
+      );
+      session.step = STEPS.WAITING_RUT;
+      break;
+    }
+
     case STEPS.CONTACTO_NOMBRE:
       await manejarContactoNombre(phone, session, text);
       break;
@@ -1181,16 +1204,31 @@ async function manejarMenuInicio(phone, session, text) {
     /hablar con|contactar|comunicarme|necesito hablar|quiero hablar|hablar con alguien|ejecutivo|asesor|vendedor|persona real|agente|llamarme|me llamen|me pueden llamar|consulta|duda|problema|reclamo|queja|factura|boleta|pedido|horario|direccion|sucursal|informacion/
     .test(t);
 
-  // Detección de intención de cotización directa
+  // Detección de intención de cotización directa — palabras que indican que
+  // YA sabemos qué quiere (acción de compra o categoría concreta del catálogo)
   const esCotizacion = /^1$/.test(t) ||
-    /cotizar|cotizacion|precio|productos?|necesito|quiero|busco|comprar|pedir|cuanto|cuanto sale|lavaloza|toalla|guante|desinfect|limpiez|higiene|quimico/
+    /cotizar|cotizacion|precio|necesito|quiero|busco|comprar|pedir|cuanto|cuanto sale|lavaloza|toalla|guante|desinfect|limpiez|higiene|quimico/
     .test(t);
+
+  // Mención vaga de "producto/productos" SIN decir cuál (ej. "vi un producto
+  // en la página") — en vez de asumir y saltar directo a pedir el RUT,
+  // preguntamos primero qué producto es (misma idea que el link de la web).
+  const mencionaProductoVago = !esCotizacion && /\bproductos?\b/.test(t);
 
   if (esContacto) {
     session.step = STEPS.CONTACTO_NOMBRE;
     await sendMessage(phone,
       `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n` +
       `¿Cuál es tu *nombre* para informarle?`
+    );
+    return;
+  }
+
+  if (mencionaProductoVago) {
+    session.step = STEPS.ESPERANDO_PRODUCTO;
+    await sendMessage(phone,
+      `📦 ¡Claro! ¿Qué producto te interesa?\n\n` +
+      `Cuéntame el nombre, o pégame el link de la página.`
     );
     return;
   }
