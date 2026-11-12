@@ -560,6 +560,29 @@ function pareceFueraDeTema(text) {
   return t.includes("?") || (palabras.length >= 3 && digitos < 4);
 }
 
+// El botón "Consultar por WhatsApp" de cintecsa.cl manda un mensaje con el
+// nombre del producto y el link de su ficha. Llega en DOS formatos distintos
+// según cómo se generó el link:
+//  A) "Me gustaría saber más sobre este producto.: JABON DERMO FOAM 800 ML X 1 UN
+//      - https://www.cintecsa.cl/jabon-dermo-foam-800-ml-x-1-un"   (nombre explícito)
+//  B) "Me gustaría saber más sobre este producto. https://www.cintecsa.cl/..."
+//      (sin nombre — WhatsApp solo muestra el título como "preview" en pantalla,
+//      pero ese título NO llega en el texto que recibe el bot por la API)
+// Devuelve el nombre del producto (o un término de búsqueda razonable a partir
+// del slug de la URL para el formato B), o null si el mensaje no viene de ese botón.
+function extraerProductoDeLink(text) {
+  const conNombre = text.match(/me gustar[ií]a saber m[aá]s sobre este producto\.?:?\s*(.+?)\s+-\s+https?:\/\/\S+/i);
+  if (conNombre) return conNombre[1].trim();
+
+  const soloLink = text.match(/me gustar[ií]a saber m[aá]s sobre este producto\.?\s*(https?:\/\/\S+)/i);
+  if (soloLink) {
+    const slug = soloLink[1].replace(/^https?:\/\/[^/]+\//, "").replace(/\/+$/, "").split("/").pop();
+    const legible = slug ? slug.replace(/[-_]+/g, " ").trim() : "";
+    if (legible) return legible.replace(/\b\w/g, c => c.toUpperCase()); // "Jabon Dermo Foam 800 Ml X 1 Un"
+  }
+  return null;
+}
+
 // Cuando la búsqueda por palabras no encuentra nada, la IA propone sinónimos técnicos
 // (ej: "algo para sacar grasa" → "desengrasante, limpiador"). La IA NO inventa productos:
 // solo sugiere palabras; el catálogo real decide qué existe.
@@ -898,10 +921,16 @@ async function handleMessage(phone, text) {
     return;
   }
 
-  if (session.step === STEPS.DONE && /^(hola|nueva|reiniciar|inicio)$/i.test(text)) {
-    delete sessions[phone];
-    sessions[phone] = { step: STEPS.START, data: {} };
+  // "hola / menu / nueva / inicio / reiniciar" reinicia la conversación desde
+  // CUALQUIER paso del flujo, no solo cuando ya terminó (STEPS.DONE) — el bot
+  // le promete esto al cliente en varios mensajes (tras cotizar, tras derivar
+  // a un ejecutivo), así que debe funcionar siempre o el cliente queda
+  // atrapado en el paso anterior (ej. "No entendí tu selección" en vez del
+  // menú de bienvenida). Se muta `session` en el lugar, nunca se reemplaza el
+  // objeto, para no desincronizar esta variable local del mapa `sessions`.
+  if (session.step !== STEPS.START && /^(hola|menu|nueva|reiniciar|inicio)$/i.test(normalizar(text))) {
     session.step = STEPS.START;
+    session.data = {};
   }
 
   // Interceptar consultas/preguntas libres durante el flujo de cotización
@@ -916,7 +945,25 @@ async function handleMessage(phone, text) {
 
   switch (session.step) {
 
-    case STEPS.START:
+    case STEPS.START: {
+      // El botón "Consultar por WhatsApp" de cintecsa.cl manda el nombre del
+      // producto en el propio mensaje — si ya nos dijo qué quiere, no se lo
+      // volvemos a preguntar: vamos directo a pedir el RUT para cotizar.
+      const productoDesdeLink = extraerProductoDeLink(text);
+      if (productoDesdeLink) {
+        session.data.productoDesdeLink = productoDesdeLink;
+        await sendMessage(phone,
+          `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
+          `Vi que te interesa *${productoDesdeLink}* 📦 — ¡vamos a cotizarlo!\n\n` +
+          `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
+          `Si tienes *RUT de empresa*, ingrésalo.\n` +
+          `De lo contrario, ingresa tu *RUT personal*.\n\n` +
+          `_Ej empresa: 76.123.456-7_\n` +
+          `_Ej personal: 12.345.678-9_`
+        );
+        session.step = STEPS.WAITING_RUT;
+        break;
+      }
       await sendMessage(phone,
         `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
         `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
@@ -926,6 +973,7 @@ async function handleMessage(phone, text) {
       );
       session.step = STEPS.MENU_INICIO;
       break;
+    }
 
     case STEPS.MENU_INICIO:
       await manejarMenuInicio(phone, session, text);
@@ -1016,6 +1064,15 @@ async function handleMessage(phone, text) {
         break;
       }
       session.data.razonSocial = text;
+      if (session.data.productoDesdeLink) {
+        // Ya sabíamos qué producto quiere desde su primer mensaje (el link de
+        // la web) — no preguntamos de nuevo, buscamos directo en el catálogo.
+        session.data.textoProductos = session.data.productoDesdeLink;
+        session.step = STEPS.WAITING_PRODUTOS;
+        await sendMessage(phone, `✅ Registrado.\n\n🔍 Buscando *${session.data.productoDesdeLink}* en nuestro catálogo...`);
+        await procesarProductos(phone, session);
+        break;
+      }
       session.step = STEPS.WAITING_PRODUTOS;
       await sendMessage(phone,
         `✅ Registrado.\n\n` +
