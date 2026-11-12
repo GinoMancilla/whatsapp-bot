@@ -584,6 +584,22 @@ function extraerProductoDeLink(text) {
   return null;
 }
 
+// Clasifica la intención de un mensaje por palabras clave — se usa tanto en
+// el primerísimo mensaje (STEPS.START) como en el menú inicial (MENU_INICIO),
+// para que el bot reconozca la intención aunque venga junto con el saludo
+// (ej. "hola necesito cotizar lavaloza" no debería mostrar el menú genérico
+// 1/2 — ya sabemos qué quiere). Devuelve "contacto" | "cotizar" |
+// "producto_vago" (menciona "producto" sin decir cuál) | "ninguno".
+function detectarIntencionTexto(text) {
+  const t = normalizar(text);
+  const esContacto = /hablar con|contactar|comunicarme|necesito hablar|quiero hablar|hablar con alguien|ejecutivo|asesor|vendedor|persona real|agente|llamarme|me llamen|me pueden llamar|consulta|duda|problema|reclamo|queja|factura|boleta|pedido|horario|direccion|sucursal|informacion/.test(t);
+  if (esContacto) return "contacto";
+  const esCotizacion = /cotizar|cotizacion|precio|necesito|quiero|busco|comprar|pedir|cuanto|cuanto sale|lavaloza|toalla|guante|desinfect|limpiez|higiene|quimico/.test(t);
+  if (esCotizacion) return "cotizar";
+  if (/\bproductos?\b/.test(t)) return "producto_vago";
+  return "ninguno";
+}
+
 // Cuando la búsqueda por palabras no encuentra nada, la IA propone sinónimos técnicos
 // (ej: "algo para sacar grasa" → "desengrasante, limpiador"). La IA NO inventa productos:
 // solo sugiere palabras; el catálogo real decide qué existe.
@@ -965,8 +981,38 @@ async function handleMessage(phone, text) {
         session.step = STEPS.WAITING_RUT;
         break;
       }
-      await sendMessage(phone,
-        `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
+
+      // El cliente puede traer la intención ya clara desde el primer mensaje
+      // (ej. "hola necesito cotizar lavaloza" o "hola vi un producto en la
+      // página") — si es así, no mostramos el menú genérico 1/2: respondemos
+      // directo a lo que pidió, con el mismo saludo de bienvenida primero.
+      const intencion = detectarIntencionTexto(text);
+      const saludo = `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n`;
+
+      if (intencion === "contacto") {
+        session.step = STEPS.CONTACTO_NOMBRE;
+        await sendMessage(phone, saludo +
+          `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n¿Cuál es tu *nombre* para informarle?`
+        );
+        break;
+      }
+      if (intencion === "producto_vago") {
+        session.step = STEPS.ESPERANDO_PRODUCTO;
+        await sendMessage(phone, saludo +
+          `📦 ¡Claro! ¿Qué producto te interesa?\n\nCuéntame el nombre, o pégame el link de la página.`
+        );
+        break;
+      }
+      if (intencion === "cotizar") {
+        session.step = STEPS.WAITING_RUT;
+        await sendMessage(phone, saludo +
+          `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
+          `Si tienes *RUT de empresa*, ingrésalo.\nDe lo contrario, ingresa tu *RUT personal*.\n\n_Ej empresa: 76.123.456-7_\n_Ej personal: 12.345.678-9_`
+        );
+        break;
+      }
+
+      await sendMessage(phone, saludo +
         `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
         `¿En qué te podemos ayudar hoy?\n\n` +
         `*1.* 📦 Cotizar productos\n` +
@@ -1198,22 +1244,12 @@ async function handleMessage(phone, text) {
 // ─── Menú inicial ────────────────────────────────────────────────────────────
 async function manejarMenuInicio(phone, session, text) {
   const t = normalizar(text);
+  const intencionTexto = detectarIntencionTexto(text);
 
-  // Detección de intención de contacto (sin cotización)
-  const esContacto = /^2$/.test(t) ||
-    /hablar con|contactar|comunicarme|necesito hablar|quiero hablar|hablar con alguien|ejecutivo|asesor|vendedor|persona real|agente|llamarme|me llamen|me pueden llamar|consulta|duda|problema|reclamo|queja|factura|boleta|pedido|horario|direccion|sucursal|informacion/
-    .test(t);
-
-  // Detección de intención de cotización directa — palabras que indican que
-  // YA sabemos qué quiere (acción de compra o categoría concreta del catálogo)
-  const esCotizacion = /^1$/.test(t) ||
-    /cotizar|cotizacion|precio|necesito|quiero|busco|comprar|pedir|cuanto|cuanto sale|lavaloza|toalla|guante|desinfect|limpiez|higiene|quimico/
-    .test(t);
-
-  // Mención vaga de "producto/productos" SIN decir cuál (ej. "vi un producto
-  // en la página") — en vez de asumir y saltar directo a pedir el RUT,
-  // preguntamos primero qué producto es (misma idea que el link de la web).
-  const mencionaProductoVago = !esCotizacion && /\bproductos?\b/.test(t);
+  // Atajos del menú numerado (solo tienen sentido aquí, respondiendo 1 o 2)
+  const esContacto = /^2$/.test(t) || intencionTexto === "contacto";
+  const esCotizacion = /^1$/.test(t) || intencionTexto === "cotizar";
+  const mencionaProductoVago = !esCotizacion && intencionTexto === "producto_vago";
 
   if (esContacto) {
     session.step = STEPS.CONTACTO_NOMBRE;
