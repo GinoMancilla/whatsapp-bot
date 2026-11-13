@@ -982,13 +982,37 @@ async function handleMessage(phone, text) {
         break;
       }
 
-      // El cliente puede traer el RUT ya en su primerísimo mensaje (comun en
-      // audios donde cuenta todo junto: nombre, RUT y lo que quiere cotizar).
-      // Si lo detectamos, lo registramos y usamos la IA para rescatar nombre y
-      // productos del mismo texto, en vez de volver a preguntarlos.
+      // El cliente puede traer varios datos juntos en su primerísimo mensaje
+      // (comun en audios donde cuenta todo de corrido: nombre, RUT y lo que
+      // quiere cotizar, en cualquier orden). Se usa la IA para rescatar lo que
+      // haya, y mas abajo (al validar el RUT) se usan para no repreguntarlos.
+      const esMensajeSustancial = text.trim().length >= 15;
+      const datosIniciales = esMensajeSustancial ? await extraerDatosIniciales(text) : null;
+      if (datosIniciales?.nombre && datosIniciales.nombre.length >= 3) {
+        session.data.razonSocial = datosIniciales.nombre;
+      }
+      if (datosIniciales?.productos && datosIniciales.productos.length >= 3) {
+        session.data.textoProductos = datosIniciales.productos;
+      }
+
       const rutEnPrimerMensaje = text.match(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/);
-      if (rutEnPrimerMensaje && validarRUT(rutEnPrimerMensaje[0])) {
-        await iniciarConDatosCompletos(phone, session, text, rutEnPrimerMensaje[0]);
+      const rutCandidatoInicial =
+        (datosIniciales?.rut && validarRUT(datosIniciales.rut)) ? datosIniciales.rut :
+        (rutEnPrimerMensaje && validarRUT(rutEnPrimerMensaje[0])) ? rutEnPrimerMensaje[0] : null;
+
+      if (rutCandidatoInicial) {
+        const rutLimpio = normalizarRUT(rutCandidatoInicial);
+        const soloDigitos = rutLimpio.slice(0, -1);
+        session.data.rut = rutLimpio;
+        session.data.rutLimpio = rutLimpio;
+        session.data.rutSinDV = soloDigitos;
+        session.data.esperandoRutPersonal = parseInt(soloDigitos, 10) < 50000000;
+        await sendMessage(phone,
+          `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
+          `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
+          `✅ RUT registrado: *${soloDigitos}-${rutLimpio.slice(-1)}*`
+        );
+        await avanzarFlujoCotizacion(phone, session);
         break;
       }
 
@@ -1080,11 +1104,8 @@ async function handleMessage(phone, text) {
         session.data.rutLimpio = "";
         session.data.rutSinDV  = null; // null no matchea historial → precio lista
         session.data.sinRut    = true;
-        session.step = STEPS.WAITING_RAZON;
-        await sendMessage(phone,
-          `👍 Sin problema, te cotizaré con *precio lista*.\n\n` +
-          `¿Cuál es tu *nombre o razón social*?`
-        );
+        await sendMessage(phone, `👍 Sin problema, te cotizaré con *precio lista*.`);
+        await avanzarFlujoCotizacion(phone, session);
         break;
       }
       if (rechazaRut) {
@@ -1134,8 +1155,8 @@ async function handleMessage(phone, text) {
       session.data.rutLimpio        = rutLimpio;
       session.data.rutSinDV         = soloDigitos;
       session.data.esperandoRutPersonal = !esEmpresa;
-      session.step = STEPS.WAITING_RAZON;
-      await sendMessage(phone, `✅ RUT registrado.\n\n¿Cuál es tu *nombre o razón social*?`);
+      await sendMessage(phone, `✅ RUT registrado.`);
+      await avanzarFlujoCotizacion(phone, session);
       break;
     }
 
@@ -1149,22 +1170,9 @@ async function handleMessage(phone, text) {
         break;
       }
       session.data.razonSocial = text;
-      if (session.data.productoDesdeLink) {
-        // Ya sabíamos qué producto quiere desde su primer mensaje (el link de
-        // la web) — no preguntamos de nuevo, buscamos directo en el catálogo.
-        session.data.textoProductos = session.data.productoDesdeLink;
-        session.step = STEPS.WAITING_PRODUTOS;
-        await sendMessage(phone, `✅ Registrado.\n\n🔍 Buscando *${session.data.productoDesdeLink}* en nuestro catálogo...`);
-        await procesarProductos(phone, session);
-        break;
-      }
-      session.step = STEPS.WAITING_PRODUTOS;
-      await sendMessage(phone,
-        `✅ Registrado.\n\n` +
-        `📦 ¿Qué productos necesitas cotizar?\n\n` +
-        `_Indica productos con cantidades:_\n` +
-        `_"lavaloza 10 unidades, toalla 2 paquetes"_`
-      );
+      // Si ya sabíamos qué producto quiere (del link de la web, o de un mensaje
+      // anterior donde ya lo dijo), no preguntamos de nuevo.
+      await avanzarFlujoCotizacion(phone, session);
       break;
     }
 
@@ -1327,9 +1335,10 @@ async function manejarMenuInicio(phone, session, text) {
   );
 }
 
-// Cuando el primer mensaje ya trae el RUT (comun en audios donde el cliente cuenta
-// todo junto: "mi nombre es X, mi rut es Y, quiero cotizar Z"), usa Claude para
-// rescatar nombre y productos del mismo mensaje y no volver a preguntarlos.
+// El primer mensaje de un cliente puede traer varios datos juntos (comun en
+// audios donde cuenta todo de corrido: "mi nombre es X, mi rut es Y, quiero
+// cotizar Z"). Usa Claude para rescatar lo que haya, en el orden que sea, para
+// no volver a preguntar lo que ya dijo.
 async function extraerDatosIniciales(text) {
   if (!anthropicClient) return null;
   try {
@@ -1337,8 +1346,9 @@ async function extraerDatosIniciales(text) {
       model: "claude-haiku-4-5-20251001",
       max_tokens: 150,
       system:
-        `Un cliente de CINTEC (limpieza industrial) escribió este primer mensaje de WhatsApp ` +
-        `(puede venir de un audio transcrito). Ya sabemos su RUT. Responde SOLO un JSON válido, sin texto extra, con:\n` +
+        `Un cliente de CINTEC (limpieza industrial) escribió este mensaje de WhatsApp ` +
+        `(puede venir de un audio transcrito, con errores de transcripción). Responde SOLO un JSON válido, sin texto extra, con:\n` +
+        `"rut": su RUT chileno tal como lo dijo (ej "17.357.917-9" o "173579179"), o null si no lo menciona.\n` +
         `"nombre": su nombre o razón social si lo dice explícitamente (ej "mi nombre es Juan Perez"), o null si no lo dice.\n` +
         `"productos": lo que pide cotizar con cantidades, tal como lo dijo (ej "10 rollos de toalla de 350 metros"), o null si no pide nada.\n` +
         `No inventes datos que no estén explícitos en el mensaje.`,
@@ -1349,6 +1359,7 @@ async function extraerDatosIniciales(text) {
     if (!match) return null;
     const data = JSON.parse(match[0]);
     return {
+      rut: typeof data.rut === "string" ? data.rut.trim() : null,
       nombre: typeof data.nombre === "string" ? data.nombre.trim() : null,
       productos: typeof data.productos === "string" ? data.productos.trim() : null,
     };
@@ -1358,54 +1369,29 @@ async function extraerDatosIniciales(text) {
   }
 }
 
-// El cliente ya dio un RUT valido en su primerisimo mensaje — registra el RUT y
-// usa la IA para rescatar nombre/productos del mismo texto, saltando los pasos
-// que ya quedaron contestados.
-async function iniciarConDatosCompletos(phone, session, text, rutDetectado) {
-  const rutLimpio = normalizarRUT(rutDetectado);
-  const soloDigitos = rutLimpio.slice(0, -1);
-  const esEmpresa = parseInt(soloDigitos, 10) >= 50000000;
-  session.data.rut = rutLimpio;
-  session.data.rutLimpio = rutLimpio;
-  session.data.rutSinDV = soloDigitos;
-  session.data.esperandoRutPersonal = !esEmpresa;
-
-  const saludo = `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n`;
-  const aviso = `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n`;
-  const rutMostrado = `${soloDigitos}-${rutLimpio.slice(-1)}`;
-
-  const datos = await extraerDatosIniciales(text);
-
-  if (datos?.nombre && datos.nombre.length >= 3) {
-    session.data.razonSocial = datos.nombre;
-
-    if (datos.productos && datos.productos.length >= 3) {
-      session.data.textoProductos = datos.productos;
-      session.step = STEPS.WAITING_PRODUTOS;
-      await sendMessage(phone, saludo + aviso +
-        `✅ RUT registrado: *${rutMostrado}*\n` +
-        `✅ Nombre: *${session.data.razonSocial}*\n\n` +
-        `🔍 Buscando *${session.data.textoProductos}* en nuestro catálogo...`
-      );
-      await procesarProductos(phone, session);
-      return;
-    }
-
+// Decide el siguiente paso de la cotizacion segun que datos ya tenemos. Se usa
+// tanto apenas se registra el RUT como despues de cada paso siguiente, para no
+// preguntar lo que el cliente ya dijo en un mensaje anterior (ej. en el primer
+// audio, antes de que le pidieramos el RUT).
+async function avanzarFlujoCotizacion(phone, session) {
+  if (!session.data.razonSocial) {
+    session.step = STEPS.WAITING_RAZON;
+    await sendMessage(phone, `¿Cuál es tu *nombre o razón social*?`);
+    return;
+  }
+  const productos = session.data.textoProductos || session.data.productoDesdeLink;
+  if (!productos) {
     session.step = STEPS.WAITING_PRODUTOS;
-    await sendMessage(phone, saludo + aviso +
-      `✅ RUT registrado: *${rutMostrado}*\n` +
-      `✅ Nombre: *${session.data.razonSocial}*\n\n` +
-      `📦 ¿Qué productos necesitas cotizar?\n\n` +
-      `_Indica productos con cantidades:_\n` +
-      `_"lavaloza 10 unidades, toalla 2 paquetes"_`
+    await sendMessage(phone,
+      `✅ Registrado.\n\n📦 ¿Qué productos necesitas cotizar?\n\n` +
+      `_Indica productos con cantidades:_\n_"lavaloza 10 unidades, toalla 2 paquetes"_`
     );
     return;
   }
-
-  session.step = STEPS.WAITING_RAZON;
-  await sendMessage(phone, saludo + aviso +
-    `✅ RUT registrado: *${rutMostrado}*\n\n¿Cuál es tu *nombre o razón social*?`
-  );
+  session.data.textoProductos = productos;
+  session.step = STEPS.WAITING_PRODUTOS;
+  await sendMessage(phone, `✅ Registrado.\n\n🔍 Buscando *${productos}* en nuestro catálogo...`);
+  await procesarProductos(phone, session);
 }
 
 // Clasifica un mensaje ambiguo del menú inicial en: cotizar | contacto | ninguno.
