@@ -1103,8 +1103,14 @@ async function handleMessage(phone, text) {
         );
         break;
       }
-      const rutLimpio = normalizarRUT(text);
-      if (!validarRUT(text)) {
+      // El cliente puede escribir/decir solo el RUT, o una frase completa que lo
+      // incluye (comun en audios: "mi rut es 17.357.917-9"). Si hay un RUT con
+      // guion reconocible dentro del texto, se usa ese; si no, se valida el
+      // texto completo (comportamiento anterior, para respuestas cortas).
+      const rutEnFrase = text.match(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/);
+      const rutCandidato = rutEnFrase ? rutEnFrase[0] : text;
+      const rutLimpio = normalizarRUT(rutCandidato);
+      if (!validarRUT(rutCandidato)) {
         await sendMessage(phone,
           `⚠️ RUT inválido. Ingrésalo nuevamente.\n` +
           `_Ej empresa: 76.123.456-7 · Ej personal: 12.345.678-9_`
