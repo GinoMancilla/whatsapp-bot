@@ -982,6 +982,16 @@ async function handleMessage(phone, text) {
         break;
       }
 
+      // El cliente puede traer el RUT ya en su primerísimo mensaje (comun en
+      // audios donde cuenta todo junto: nombre, RUT y lo que quiere cotizar).
+      // Si lo detectamos, lo registramos y usamos la IA para rescatar nombre y
+      // productos del mismo texto, en vez de volver a preguntarlos.
+      const rutEnPrimerMensaje = text.match(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/);
+      if (rutEnPrimerMensaje && validarRUT(rutEnPrimerMensaje[0])) {
+        await iniciarConDatosCompletos(phone, session, text, rutEnPrimerMensaje[0]);
+        break;
+      }
+
       // El cliente puede traer la intención ya clara desde el primer mensaje
       // (ej. "hola necesito cotizar lavaloza" o "hola vi un producto en la
       // página") — si es así, no mostramos el menú genérico 1/2: respondemos
@@ -1314,6 +1324,87 @@ async function manejarMenuInicio(phone, session, text) {
     `No entendí tu selección. Por favor elige una opción:\n\n` +
     `*1.* 📦 Cotizar productos\n` +
     `*2.* 👤 Contactar con un ejecutivo`
+  );
+}
+
+// Cuando el primer mensaje ya trae el RUT (comun en audios donde el cliente cuenta
+// todo junto: "mi nombre es X, mi rut es Y, quiero cotizar Z"), usa Claude para
+// rescatar nombre y productos del mismo mensaje y no volver a preguntarlos.
+async function extraerDatosIniciales(text) {
+  if (!anthropicClient) return null;
+  try {
+    const response = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 150,
+      system:
+        `Un cliente de CINTEC (limpieza industrial) escribió este primer mensaje de WhatsApp ` +
+        `(puede venir de un audio transcrito). Ya sabemos su RUT. Responde SOLO un JSON válido, sin texto extra, con:\n` +
+        `"nombre": su nombre o razón social si lo dice explícitamente (ej "mi nombre es Juan Perez"), o null si no lo dice.\n` +
+        `"productos": lo que pide cotizar con cantidades, tal como lo dijo (ej "10 rollos de toalla de 350 metros"), o null si no pide nada.\n` +
+        `No inventes datos que no estén explícitos en el mensaje.`,
+      messages: [{ role: "user", content: text.slice(0, 500) }],
+    });
+    const raw = response.content[0]?.text || "";
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const data = JSON.parse(match[0]);
+    return {
+      nombre: typeof data.nombre === "string" ? data.nombre.trim() : null,
+      productos: typeof data.productos === "string" ? data.productos.trim() : null,
+    };
+  } catch (err) {
+    console.error("Error extrayendo datos iniciales:", err.message);
+    return null;
+  }
+}
+
+// El cliente ya dio un RUT valido en su primerisimo mensaje — registra el RUT y
+// usa la IA para rescatar nombre/productos del mismo texto, saltando los pasos
+// que ya quedaron contestados.
+async function iniciarConDatosCompletos(phone, session, text, rutDetectado) {
+  const rutLimpio = normalizarRUT(rutDetectado);
+  const soloDigitos = rutLimpio.slice(0, -1);
+  const esEmpresa = parseInt(soloDigitos, 10) >= 50000000;
+  session.data.rut = rutLimpio;
+  session.data.rutLimpio = rutLimpio;
+  session.data.rutSinDV = soloDigitos;
+  session.data.esperandoRutPersonal = !esEmpresa;
+
+  const saludo = `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n`;
+  const aviso = `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n`;
+  const rutMostrado = `${soloDigitos}-${rutLimpio.slice(-1)}`;
+
+  const datos = await extraerDatosIniciales(text);
+
+  if (datos?.nombre && datos.nombre.length >= 3) {
+    session.data.razonSocial = datos.nombre;
+
+    if (datos.productos && datos.productos.length >= 3) {
+      session.data.textoProductos = datos.productos;
+      session.step = STEPS.WAITING_PRODUTOS;
+      await sendMessage(phone, saludo + aviso +
+        `✅ RUT registrado: *${rutMostrado}*\n` +
+        `✅ Nombre: *${session.data.razonSocial}*\n\n` +
+        `🔍 Buscando *${session.data.textoProductos}* en nuestro catálogo...`
+      );
+      await procesarProductos(phone, session);
+      return;
+    }
+
+    session.step = STEPS.WAITING_PRODUTOS;
+    await sendMessage(phone, saludo + aviso +
+      `✅ RUT registrado: *${rutMostrado}*\n` +
+      `✅ Nombre: *${session.data.razonSocial}*\n\n` +
+      `📦 ¿Qué productos necesitas cotizar?\n\n` +
+      `_Indica productos con cantidades:_\n` +
+      `_"lavaloza 10 unidades, toalla 2 paquetes"_`
+    );
+    return;
+  }
+
+  session.step = STEPS.WAITING_RAZON;
+  await sendMessage(phone, saludo + aviso +
+    `✅ RUT registrado: *${rutMostrado}*\n\n¿Cuál es tu *nombre o razón social*?`
   );
 }
 
