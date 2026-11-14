@@ -948,6 +948,20 @@ async function handleMessage(phone, text) {
     return;
   }
 
+  // ── Pide que le mandemos la cotización por este mismo WhatsApp ─────────────
+  // (no solo por correo) -- desde cualquier punto, el pedido más común es justo
+  // despues de recibir el correo, cuando ya terminó la cotización.
+  {
+    const tNorm = normalizar(text);
+    const pideAca = /\bpdf\b/.test(tNorm) ||
+      (/(mandame|mandamela|envíame|enviame|pasame|puedes mandar|puedes enviar)/.test(tNorm) &&
+       /(por (aqui|aca|whatsapp|este (chat|medio))|a este whatsapp)/.test(tNorm));
+    if (pideAca) {
+      await reenviarCotizacionPorWhatsapp(phone);
+      return;
+    }
+  }
+
   // "hola / menu / nueva / inicio / reiniciar" reinicia la conversación desde
   // CUALQUIER paso del flujo, no solo cuando ya terminó (STEPS.DONE) — el bot
   // le promete esto al cliente en varios mensajes (tras cotizar, tras derivar
@@ -2435,6 +2449,53 @@ function generarCotizacionPdf(data, folio, total, fecha) {
   });
 }
 
+// El cliente pide que le mandemos la cotización por este mismo WhatsApp (no
+// solo por correo). Primero intenta con la sesión en memoria (si acaba de
+// cotizar, esos datos siguen ahí); si ya se perdió (la sesión se limpia a los
+// 5 min), busca la última cotización registrada para este teléfono.
+async function reenviarCotizacionPorWhatsapp(phone) {
+  const session = sessions[phone];
+  let datosPdf, folio, total, fecha;
+
+  if (session?.data?.folio && session.data.productosConfirmados?.length) {
+    datosPdf = session.data;
+    folio = session.data.folio;
+    total = session.data.productosConfirmados.reduce(
+      (sum, item) => sum + (item.seleccionado?.precio || 0) * (item.cantidad || 1), 0
+    );
+    fecha = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+  } else {
+    const ultima = [...cotizacionesLog].reverse().find(e => e.tipo === "cotizacion" && e.phone === phone);
+    if (!ultima) {
+      await sendMessage(phone,
+        `No encontré una cotización reciente a tu nombre por este medio. Si ya te llegó por correo, ` +
+        `revisa esa casilla; o escribe *cotizar* para armar una nueva. 🙏`
+      );
+      return;
+    }
+    folio = ultima.folio;
+    total = ultima.total;
+    fecha = new Date(ultima.timestamp).toLocaleString("es-CL", { timeZone: "America/Santiago" });
+    datosPdf = {
+      razonSocial: ultima.razonSocial, rut: ultima.rut, esClienteNuevo: ultima.esClienteNuevo,
+      direccionEntrega: ultima.direccionEntrega, requiereFlete: ultima.requiereFlete,
+      productosConfirmados: (ultima.productos || []).map(p => ({
+        seleccionado: { CodProd: p.codigo, DesProd: p.descripcion, precio: p.precio },
+        cantidad: p.cantidad, unidad: p.unidad,
+      })),
+    };
+  }
+
+  try {
+    const pdfBuffer = await generarCotizacionPdf(datosPdf, folio, total, fecha);
+    const mediaId = await subirMediaWhatsapp(pdfBuffer, `Cotizacion-${folio}.pdf`, "application/pdf");
+    await enviarDocumentoWhatsapp(phone, mediaId, `Cotizacion-${folio}.pdf`, `Cotización ${folio}`);
+  } catch (err) {
+    console.error("Error reenviando cotización por WhatsApp:", err.message);
+    await sendMessage(phone, `⚠️ No pude mandarte el PDF por este medio. Ya te llegó por correo a tu casilla registrada.`);
+  }
+}
+
 async function enviarCotizacionCompleta(phone, data) {
   try {
     const resend      = resendClient;
@@ -3241,6 +3302,31 @@ async function sendMessage(to, body) {
   } catch (err) {
     console.error("Error enviando mensaje:", err.response?.data || err.message);
   }
+}
+
+// Sube un archivo (ej. el PDF de una cotización) a Meta y devuelve su media ID,
+// para poder mandarlo como documento de WhatsApp. Usa fetch + FormData nativos
+// (no axios) -- es la combinación que de verdad arma bien el multipart en Node.
+async function subirMediaWhatsapp(buffer, filename, mimeType) {
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("file", new Blob([buffer], { type: mimeType }), filename);
+  const resp = await fetch(`https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/media`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    body: form,
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(`Meta rechazó la subida del archivo: ${JSON.stringify(data)}`);
+  return data.id;
+}
+
+async function enviarDocumentoWhatsapp(phone, mediaId, filename, caption) {
+  await axios.post(
+    `https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/messages`,
+    { messaging_product: "whatsapp", to: phone, type: "document", document: { id: mediaId, filename, caption } },
+    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
+  );
 }
 
 // Plantillas pre-aprobadas por Meta — únicas permitidas fuera de la ventana de 24h
