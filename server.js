@@ -764,10 +764,19 @@ app.post("/webhook", async (req, res) => {
     if (processedMsgIds.has(msg.id)) return;
     processedMsgIds.add(msg.id);
     const from = msg.from;
-    // Comprobantes de pago: el cliente envía una imagen o documento (PDF)
-    if (msg.type === "image" || msg.type === "document") {
+    // Documento (PDF): casi siempre un comprobante de pago.
+    if (msg.type === "document") {
       if (!checkRateLimit(from)) return;
       await manejarComprobante(from, msg);
+      return;
+    }
+    // Foto: si hay una cotización esperando pago se asume comprobante (flujo
+    // existente); si no, se asume que el cliente quiere identificar un
+    // producto o una pieza a partir de la imagen (ej. "la pieza azul de la
+    // llave del lavabo") — ver manejarImagen().
+    if (msg.type === "image") {
+      if (!checkRateLimit(from)) return;
+      await manejarImagen(from, msg);
       return;
     }
     // Nota de voz: se transcribe y se procesa como si el cliente lo hubiera escrito
@@ -2612,6 +2621,74 @@ async function manejarAudio(phone, msg) {
   await sendMessage(phone,
     `🎤 Recibimos tu audio, pero no pudimos entenderlo automáticamente.\n\n` +
     `¿Puedes escribirlo, por favor? Así te ayudo de inmediato. 🙏`
+  );
+}
+
+// Identifica un producto o pieza a partir de una foto (ej. "la pieza azul de
+// adentro de la llave del lavabo") usando vision de Claude, y devuelve 2-4
+// palabras clave de busqueda para el catalogo. null si no hay IA o falla.
+async function identificarProductoConVision(mediaId, mimeTypeOriginal) {
+  if (!anthropicClient || !mediaId) return null;
+  try {
+    const meta = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    });
+    const file = await axios.get(meta.data.url, {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+      responseType: "arraybuffer",
+      maxContentLength: 15 * 1024 * 1024,
+      timeout: 15_000,
+    });
+    const base64Imagen = Buffer.from(file.data).toString("base64");
+    const mimeType = (mimeTypeOriginal || "image/jpeg").split(";")[0].trim();
+
+    const response = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 40,
+      system:
+        `Eres experto en productos de limpieza, higiene y desinfección industrial. ` +
+        `El cliente mandó una foto de un producto o de una pieza que necesita reponer ` +
+        `(puede no saber el nombre técnico, ej. una pieza de una llave de lavabo). ` +
+        `Describe en 2-4 palabras clave en español lo que ves, pensando en cómo se ` +
+        `llamaría ese producto en un catálogo (ej: "válvula llave lavabo", "guante nitrilo", ` +
+        `"desengrasante industrial"). Responde SOLO las palabras clave, sin comillas ni comentarios.`,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: mimeType, data: base64Imagen } },
+          { type: "text", text: "¿Qué producto es este?" },
+        ],
+      }],
+    });
+    const texto = response.content[0]?.text?.trim();
+    return texto || null;
+  } catch (err) {
+    console.error("Error identificando producto por foto:", err.response?.data || err.message);
+    return null;
+  }
+}
+
+async function manejarImagen(phone, msg) {
+  // Si hay una cotización esperando pago, se asume que la foto es el
+  // comprobante de transferencia (comportamiento existente, sin cambios).
+  const candidatosPago = cotizacionesPendientesDePago(phone);
+  if (candidatosPago.length > 0) {
+    await manejarComprobante(phone, msg);
+    return;
+  }
+
+  const termino = await identificarProductoConVision(msg.image?.id, msg.image?.mime_type);
+  if (termino) {
+    await sendMessage(phone, `📷 _Identifiqué: "${termino}"_`);
+    await handleMessage(phone, termino); // reutiliza el flujo normal de texto
+    return;
+  }
+
+  if (!sessions[phone]) sessions[phone] = { step: STEPS.START, data: {} };
+  registrarConversacionProblematica(phone, sessions[phone], "foto_sin_identificar");
+  await sendMessage(phone,
+    `📷 Recibimos tu foto, pero no pudimos identificar el producto automáticamente.\n\n` +
+    `¿Puedes contarnos el nombre o para qué lo usas? Así te ayudamos de inmediato. 🙏`
   );
 }
 
