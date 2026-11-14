@@ -917,7 +917,7 @@ async function handleMessage(phone, text) {
   if (!enFlujoContacto && /hablar con|quiero un ejecutivo|necesito un asesor|agente humano|persona real|vendedor|asesor|contactar(me)?|comunicarme/i.test(normalizar(text))) {
     if (session.data.razonSocial) {
       // Ya tenemos su nombre (estaba en medio de una cotización): notificar de inmediato
-      await notificarContactoEjecutivo(phone, session.data.razonSocial, "Solicitó ejecutivo durante cotización");
+      await notificarContactoEjecutivo(phone, session.data.razonSocial, "Solicitó ejecutivo durante cotización", session);
       registrarContacto(phone, session.data.razonSocial, "Solicitó ejecutivo durante cotización");
       await sendMessage(phone,
         `👤 Entendido, *${session.data.razonSocial}*. Un *ejecutivo de ventas* de CINTEC ` +
@@ -1439,7 +1439,7 @@ async function manejarContactoMotivo(phone, session, text) {
   const nombre = session.data.nombreContacto || "Cliente";
   session.data.motivoContacto = text;
 
-  await notificarContactoEjecutivo(phone, nombre, text);
+  await notificarContactoEjecutivo(phone, nombre, text, session);
   registrarContacto(phone, nombre, text);
 
   await sendMessage(phone,
@@ -1451,10 +1451,63 @@ async function manejarContactoMotivo(phone, session, text) {
   setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
 }
 
-async function notificarContactoEjecutivo(phone, nombre, motivo) {
+// Arma un resumen de una línea para el ejecutivo a partir de lo que el cliente
+// ya dijo en la conversación (razón social, RUT, productos pedidos/confirmados,
+// lo que no se encontró en catálogo) + el motivo que escribió. Si no hay IA
+// disponible o falla, arma el mismo resumen con texto plano (modo degradado) —
+// nunca bloquea el envío del correo de contacto.
+async function resumirParaEjecutivo(nombre, motivo, session) {
+  const d = session?.data || {};
+  const productosTxt = (d.productosConfirmados || [])
+    .map(p => `${p.cantidad || ""} ${p.unidad || ""} ${p.seleccionado?.DesProd || ""}`.trim())
+    .filter(Boolean)
+    .join(", ");
+  const noEncontrados = (d.productosNoEncontrados || []).join(", ");
+
+  const resumenPlano = [
+    nombre,
+    d.textoProductos ? `pide: ${d.textoProductos}` : null,
+    productosTxt ? `confirmado: ${productosTxt}` : null,
+    noEncontrados ? `no encontrado en catálogo: ${noEncontrados}` : null,
+    `motivo: ${motivo}`,
+  ].filter(Boolean).join(" — ");
+
+  if (!anthropicClient) return resumenPlano;
+
+  const contexto = [
+    `Cliente: ${nombre}`,
+    d.rut ? `RUT: ${d.rut}` : null,
+    d.textoProductos ? `Pidió cotizar: ${d.textoProductos}` : null,
+    productosTxt ? `Ya confirmado en catálogo: ${productosTxt}` : null,
+    noEncontrados ? `No encontrado en catálogo: ${noEncontrados}` : null,
+    `Motivo que escribió: ${motivo}`,
+  ].filter(Boolean).join("\n");
+
+  try {
+    const response = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 100,
+      system:
+        `Eres el asistente de un ejecutivo de ventas de CINTEC (productos de limpieza industrial). ` +
+        `Con el contexto de abajo, escribe UNA sola línea en español (máx. 220 caracteres), sin saludos ` +
+        `ni relleno, que le permita al ejecutivo entender de inmediato qué necesita el cliente antes de ` +
+        `contactarlo. Menciona qué pidió y cualquier detalle accionable (producto no encontrado en catálogo, ` +
+        `motivo declarado). No inventes datos que no estén en el contexto.`,
+      messages: [{ role: "user", content: contexto.slice(0, 1200) }],
+    });
+    const out = (response.content[0]?.text || "").trim();
+    return out || resumenPlano;
+  } catch (err) {
+    console.error("Error generando resumen para ejecutivo:", err.message);
+    return resumenPlano;
+  }
+}
+
+async function notificarContactoEjecutivo(phone, nombre, motivo, session) {
   if (!resendClient) return;
   try {
     const fecha = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+    const resumen = await resumirParaEjecutivo(nombre, motivo, session);
     await resendClient.emails.send({
       from:    "Bot CINTEC <onboarding@resend.dev>",
       to:      DESTINATION_EMAIL,
@@ -1465,7 +1518,11 @@ async function notificarContactoEjecutivo(phone, nombre, motivo) {
           <p><strong>Fecha:</strong> ${fecha}</p>
           <p><strong>Nombre:</strong> ${escapeHtml(nombre)}</p>
           <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
-          <p><strong>Motivo:</strong></p>
+          <p><strong>Resumen para el ejecutivo:</strong></p>
+          <blockquote style="background:#eafaf1;padding:12px;border-left:4px solid #2ecc71;border-radius:4px;">
+            ${escapeHtml(resumen)}
+          </blockquote>
+          <p><strong>Motivo (tal como lo escribió el cliente):</strong></p>
           <blockquote style="background:#f5f5f5;padding:12px;border-left:4px solid #3498db;border-radius:4px;">
             ${escapeHtml(motivo)}
           </blockquote>
@@ -1887,6 +1944,15 @@ async function manejarMasProductos(phone, session, text) {
   }
 }
 
+// Limpia frases de corrección típicas ("busco el...", "no, era el...") para
+// quedarnos con el término de búsqueda real que el cliente quiso decir —
+// mismo criterio que ya usa manejarEleccionOpcion para su propio catálogo.
+function limpiarCorreccionProducto(text) {
+  return text.trim()
+    .replace(/^(busco\s+(el\s+|la\s+|los\s+|las\s+)?|quiero\s+(el\s+|la\s+|los\s+|las\s+)?|necesito\s+(el\s+|la\s+|los\s+|las\s+)?|dame\s+(el\s+|la\s+)?|no,?\s*(es|era|ser[ií]a)\s*(el\s+|la\s+|los\s+|las\s+)?)/i, "")
+    .trim();
+}
+
 // ─── Manejar confirmación (cliente existente) ─────────────────────────────────
 async function manejarConfirmacion(phone, session, text) {
   const textNorm = normalizar(text);
@@ -1894,24 +1960,59 @@ async function manejarConfirmacion(phone, session, text) {
   const resultado = session.data.resultadoActual;
 
   if (session.data.modoAlternativas) {
-    const num = parseInt(text);
     const opciones = [resultado.principal, ...resultado.alternativas];
-    if (isNaN(num) || num < 1 || num > opciones.length) {
-      await sendMessage(phone, `⚠️ Responde con un número entre 1 y ${opciones.length}.`);
-      await registrarError(phone, session);
+    const num = parseInt(text);
+
+    if (!isNaN(num) && num >= 1 && num <= opciones.length) {
+      const elegido = opciones[num - 1];
+      session.data.productosConfirmados.push({
+        seleccionado: elegido,
+        cantidad:     item.cantidad,
+        unidad:       item.unidad,
+        confirmado:   true,
+      });
+      session.data.modoAlternativas = false;
+      await sendMessage(phone, `✅ Seleccionado: *${elegido.DesProd}*`);
+      session.data.itemsPendientes.shift();
+      await siguientePasoTrasConfirmacion(phone, session);
       return;
     }
-    const elegido = opciones[num - 1];
-    session.data.productosConfirmados.push({
-      seleccionado: elegido,
-      cantidad:     item.cantidad,
-      unidad:       item.unidad,
-      confirmado:   true,
-    });
-    session.data.modoAlternativas = false;
-    await sendMessage(phone, `✅ Seleccionado: *${elegido.DesProd}*`);
-    session.data.itemsPendientes.shift();
-    await siguientePasoTrasConfirmacion(phone, session);
+
+    if (/^(no|n|cancelar)$/i.test(textNorm)) {
+      session.data.productosNoEncontrados.push(item.nombre);
+      session.data.modoAlternativas = false;
+      await sendMessage(phone, `Entendido, omitiremos ese producto.`);
+      session.data.itemsPendientes.shift();
+      await procesarSiguienteProducto(phone, session);
+      return;
+    }
+
+    // No respondió con un número de la lista sino con una corrección libre
+    // (típico tras un audio: "no, era el bidón de 20 litros azul") — se
+    // reinterpreta como una nueva búsqueda para este mismo producto en el
+    // catálogo general, en vez de solo insistir "responde con un número" y
+    // perder la corrección que el cliente acaba de dar.
+    const consultaLimpia = limpiarCorreccionProducto(text);
+    const palabrasUtiles = normalizar(consultaLimpia).split(" ")
+      .filter(w => w.length > 2 && !/^\d+$/.test(w) && !STOP_WORDS_ENVASE.has(w));
+
+    if (palabrasUtiles.length > 0 && session.data.rows) {
+      session.data.modoAlternativas = false;
+      const nuevoItem = {
+        nombre: consultaLimpia,
+        cantidad: item.cantidad,
+        unidad: item.unidad,
+        cantidadEspecificada: item.cantidadEspecificada,
+      };
+      session.data.itemActual = nuevoItem;
+      session.data.itemsPendientes[0] = nuevoItem;
+      await sendMessage(phone, `🔍 Buscando _"${consultaLimpia}"_ en el catálogo...`);
+      await buscarParaClienteNuevo(phone, session, nuevoItem);
+      return;
+    }
+
+    await sendMessage(phone, `⚠️ Responde con un número entre 1 y ${opciones.length}.`);
+    await registrarError(phone, session);
     return;
   }
 
@@ -1946,6 +2047,27 @@ async function manejarConfirmacion(phone, session, text) {
     msg += `Responde con el *número* de tu elección.`;
     session.data.modoAlternativas = true;
     await sendMessage(phone, msg);
+    return;
+  }
+
+  // No respondió sí/no sino con una corrección libre (ej. tras un audio:
+  // "no es ese, busco el de 20 litros azul") — mismo criterio que arriba:
+  // se reinterpreta como nueva búsqueda en vez de insistir "responde sí o no".
+  const consultaLimpia = limpiarCorreccionProducto(text);
+  const palabrasUtiles = normalizar(consultaLimpia).split(" ")
+    .filter(w => w.length > 2 && !/^\d+$/.test(w) && !STOP_WORDS_ENVASE.has(w));
+
+  if (palabrasUtiles.length > 0 && session.data.rows) {
+    const nuevoItem = {
+      nombre: consultaLimpia,
+      cantidad: item.cantidad,
+      unidad: item.unidad,
+      cantidadEspecificada: item.cantidadEspecificada,
+    };
+    session.data.itemActual = nuevoItem;
+    session.data.itemsPendientes[0] = nuevoItem;
+    await sendMessage(phone, `🔍 Buscando _"${consultaLimpia}"_ en el catálogo...`);
+    await buscarParaClienteNuevo(phone, session, nuevoItem);
     return;
   }
 
