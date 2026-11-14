@@ -652,7 +652,7 @@ async function buscarContextoCatalogo(session, pregunta) {
   } catch { return ""; }
 }
 
-async function responderConsulta(phone, session, pregunta) {
+async function responderConsulta(phone, session, pregunta, cierre = "_Continuemos con tu cotización..._") {
   if (!anthropicClient) return false;
   try {
     const client = anthropicClient;
@@ -694,7 +694,7 @@ async function responderConsulta(phone, session, pregunta) {
     if (/ejecutivo puede ayudarte|estoy aquí para ayudarte con cotizaciones/i.test(reply)) {
       registrarConversacionProblematica(phone, session, "sin_respuesta", { pregunta, respuestaClaude: reply });
     }
-    await sendMessage(phone, `${reply}\n\n_Continuemos con tu cotización..._`);
+    await sendMessage(phone, `${reply}\n\n${cierre}`);
     return true;
   } catch (err) {
     console.error("Error Claude:", err.message);
@@ -953,9 +953,10 @@ async function handleMessage(phone, text) {
   // despues de recibir el correo, cuando ya terminó la cotización.
   {
     const tNorm = normalizar(text);
+    // Tolerante a errores de tipeo en el resto de la frase ("a estel whatsapp"):
+    // basta con que mencione la cotización y el canal (whatsapp/este chat), o "pdf".
     const pideAca = /\bpdf\b/.test(tNorm) ||
-      (/(mandame|mandamela|envíame|enviame|pasame|puedes mandar|puedes enviar)/.test(tNorm) &&
-       /(por (aqui|aca|whatsapp|este (chat|medio))|a este whatsapp)/.test(tNorm));
+      (/cotizac/.test(tNorm) && /whatsapp|por aqui|por aca|este chat|este medio/.test(tNorm));
     if (pideAca) {
       await reenviarCotizacionPorWhatsapp(phone);
       return;
@@ -1281,11 +1282,18 @@ async function handleMessage(phone, text) {
       await manejarHidroEmail(phone, session, text);
       break;
 
-    case STEPS.DONE:
-      await sendMessage(phone,
-        `✅ Tu solicitud fue procesada.\n\nEscribe *hola* cuando necesites cotizar o contactar a un ejecutivo.`
-      );
+    case STEPS.DONE: {
+      // Tras terminar, el cliente puede hacer una pregunta de seguimiento
+      // (ej. "¿y el despacho a Osorno?") en vez de escribir "hola" — se
+      // intenta responder con IA antes de caer en el mensaje genérico fijo.
+      const atendido = await responderConsulta(phone, session, text, "_Escribe *hola* si necesitas algo más._");
+      if (!atendido) {
+        await sendMessage(phone,
+          `✅ Tu solicitud fue procesada.\n\nEscribe *hola* cuando necesites cotizar o contactar a un ejecutivo.`
+        );
+      }
       break;
+    }
   }
 }
 
