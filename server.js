@@ -221,12 +221,16 @@ function generarFolio() {
   return folio;
 }
 
+// Los numeros de prueba SI se registran aqui (a diferencia de las demas
+// funciones de registro) -- si no, "mandame la cotizacion por whatsapp" nunca
+// encuentra nada para probarlo una vez que la sesion expira. Se marcan
+// esPrueba:true para que reportes/export los sigan dejando fuera.
 function registrarCotizacion(phone, data) {
-  if (TEST_PHONES.has(phone)) return;
   cotizacionesLog.push({
     id:            `COT-${Date.now()}`,
     folio:         data.folio || "",
     tipo:          "cotizacion",
+    esPrueba:      TEST_PHONES.has(phone),
     timestamp:     new Date().toISOString(),
     phone,
     rut:           data.rut || "",
@@ -3597,7 +3601,7 @@ function clearPanelSession(req, res) {
 
 // ─── Panel de control KPI ─────────────────────────────────────────────────────
 function buildKPIPage(nonce, showLogout = false) {
-  const cotizaciones  = cotizacionesLog.filter(e => e.tipo === "cotizacion");
+  const cotizaciones  = cotizacionesLog.filter(e => e.tipo === "cotizacion" && !e.esPrueba);
   const contactos     = cotizacionesLog.filter(e => e.tipo === "contacto");
   const problematicas = cotizacionesLog.filter(e => e.tipo === "loop" || e.tipo === "sin_respuesta");
   const comprobantes  = cotizacionesLog.filter(e => e.tipo === "comprobante");
