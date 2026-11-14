@@ -6,6 +6,7 @@ const { parse } = require("csv-parse/sync");
 const Anthropic = require("@anthropic-ai/sdk");
 const fs = require("fs");
 const crypto = require("crypto");
+const PDFDocument = require("pdfkit");
 
 const app = express();
 app.set("trust proxy", 1); // confiar en Railway reverse proxy para req.ip correcto
@@ -2349,6 +2350,91 @@ async function cargarCSV() {
 }
 
 // ─── Enviar cotización ────────────────────────────────────────────────────────
+// Arma un PDF de la cotizacion (mismos datos que el correo en HTML) para
+// adjuntarlo -- se ve mas profesional que solo el cuerpo del correo.
+function generarCotizacionPdf(data, folio, total, fecha) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: "A4" });
+    const chunks = [];
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const left = 50, right = 545, anchoTabla = right - left;
+    const colW = { codigo: 70, desc: 215, precio: 85, cant: 65 };
+    colW.subtotal = anchoTabla - colW.codigo - colW.desc - colW.precio - colW.cant;
+
+    doc.rect(0, 0, doc.page.width, 80).fill("#c0392b");
+    doc.fillColor("#ffffff").fontSize(22).font("Helvetica-Bold").text("COTIZACIÓN CINTEC", left, 28);
+    doc.fontSize(12).font("Helvetica").text(`N° ${folio}`, left, 56);
+
+    doc.fillColor("#000000");
+    let y = 100;
+    doc.font("Helvetica-Bold").fontSize(11).text(`Estimado/a ${data.razonSocial}`, left, y);
+    y += 18;
+    doc.font("Helvetica").fontSize(10).text(`Folio: ${folio}    Fecha: ${fecha}    RUT: ${data.rut || "Por confirmar"}`, left, y);
+    y += 16;
+    if (data.esClienteNuevo) {
+      doc.font("Helvetica-Oblique").text("Precios según lista vigente.", left, y);
+      y += 16;
+    }
+    y += 10;
+
+    doc.rect(left, y, anchoTabla, 20).fill("#c0392b");
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(9);
+    let x = left;
+    [["Código", colW.codigo], ["Descripción", colW.desc], ["Precio Unit.", colW.precio], ["Cant.", colW.cant], ["Subtotal", colW.subtotal]]
+      .forEach(([texto, w]) => { doc.text(texto, x + 4, y + 6, { width: w - 6 }); x += w; });
+    y += 20;
+    doc.fillColor("#000000").font("Helvetica").fontSize(9);
+
+    data.productosConfirmados.forEach((item) => {
+      const p = item.seleccionado;
+      const subtotal = p.precio * item.cantidad;
+      const descHeight = doc.heightOfString(p.DesProd || "", { width: colW.desc - 6 });
+      const alturaFila = Math.max(20, descHeight + 10);
+      x = left;
+      [
+        [p.CodProd || "", colW.codigo],
+        [p.DesProd || "", colW.desc],
+        [`$${p.precio.toLocaleString("es-CL")}`, colW.precio],
+        [`${item.cantidad} ${item.unidad}`, colW.cant],
+        [`$${subtotal.toLocaleString("es-CL")}`, colW.subtotal],
+      ].forEach(([texto, w]) => { doc.text(String(texto), x + 4, y + 5, { width: w - 6 }); x += w; });
+      y += alturaFila;
+      doc.moveTo(left, y).lineTo(right, y).strokeColor("#eeeeee").stroke();
+    });
+
+    y += 8;
+    doc.font("Helvetica-Bold").fontSize(11).text(`TOTAL: $${total.toLocaleString("es-CL")}`, left, y, { width: anchoTabla, align: "right" });
+    y += 30;
+
+    doc.font("Helvetica").fontSize(9);
+    doc.text(`Vigencia de precios: 72 horas     Despacho: Puerto Montt     Condición de pago: ${data.esClienteNuevo ? "Contado" : "30 días"}`, left, y, { width: anchoTabla });
+    y += 20;
+    if (data.direccionEntrega) {
+      doc.text(
+        `Lugar de entrega: ${data.direccionEntrega}${data.requiereFlete ? " (fuera de zona de entrega directa — flete por cotizar)" : ""}`,
+        left, y, { width: anchoTabla }
+      );
+      y += 20;
+    }
+
+    y += 10;
+    doc.font("Helvetica-Bold").fontSize(10).text("Datos bancarios para transferencia", left, y);
+    y += 16;
+    doc.font("Helvetica").fontSize(9);
+    [
+      "Sociedad Comercial Cintec Limitada — RUT 77.338.250-6",
+      "Banco Santander — Cta. Corriente N° 36989-6",
+      "Banco BCI — Cta. Corriente N° 60310332",
+      "Enviar comprobante a caja@cintecsa.cl o por WhatsApp",
+    ].forEach((linea) => { doc.text(linea, left, y, { width: anchoTabla }); y += 14; });
+
+    doc.end();
+  });
+}
+
 async function enviarCotizacionCompleta(phone, data) {
   try {
     const resend      = resendClient;
@@ -2371,6 +2457,14 @@ async function enviarCotizacionCompleta(phone, data) {
         <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">$${subtotal.toLocaleString("es-CL")}</td>
       </tr>`;
     });
+
+    let pdfBase64 = null;
+    try {
+      const pdfBuffer = await generarCotizacionPdf(data, folio, total, fecha);
+      pdfBase64 = pdfBuffer.toString("base64");
+    } catch (err) {
+      console.error("Error generando PDF de cotización:", err.message);
+    }
 
     const htmlCotizacion = `
       <div style="font-family:Arial,sans-serif; max-width:650px; margin:auto; padding:24px; border:1px solid #e0e0e0; border-radius:8px;">
@@ -2407,11 +2501,14 @@ async function enviarCotizacionCompleta(phone, data) {
         </div>
       </div>`;
 
+    const adjuntoPdf = pdfBase64 ? [{ filename: `Cotizacion-${folio}.pdf`, content: pdfBase64 }] : undefined;
+
     await resend.emails.send({
       from: "CINTEC <onboarding@resend.dev>",
       to: data.emailCliente,
       subject: `Cotización CINTEC ${folio}`,
       html: htmlCotizacion,
+      attachments: adjuntoPdf,
     });
 
     await resend.emails.send({
@@ -2425,6 +2522,7 @@ async function enviarCotizacionCompleta(phone, data) {
         <p><strong>Tipo:</strong> ${data.esClienteNuevo ? "🆕 Cliente nuevo (Precio Lista)" : "✅ Cliente existente"}</p>
         ${data.requiereFlete ? `<p style="color:#e74c3c;font-weight:bold;">🚚 REQUIERE FLETE — entrega fuera de zona directa (${escapeHtml(data.direccionEntrega || "")}). Cotizar valor del envío.</p>` : ""}
         ${htmlCotizacion}`,
+      attachments: adjuntoPdf,
     });
 
     registrarCotizacion(phone, data);
