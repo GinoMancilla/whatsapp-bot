@@ -1287,6 +1287,13 @@ async function handleMessage(phone, text) {
       break;
 
     case STEPS.DONE: {
+      // Un simple cierre ("gracias", "ok", "listo") no necesita IA -- la IA no
+      // tiene contexto de que el PDF ya se mandó recién y termina inventando
+      // una respuesta confusa (ej. "un ejecutivo te contactará para enviarla").
+      if (/^(gracias|muchas gracias|ok|okay|dale|listo|perfecto|genial|excelente|de nada|bien)\.?!?$/i.test(normalizar(text).trim())) {
+        await sendMessage(phone, `¡De nada! 🙏 Escribe *hola* si necesitas algo más.`);
+        break;
+      }
       // Tras terminar, el cliente puede hacer una pregunta de seguimiento
       // (ej. "¿y el despacho a Osorno?") en vez de escribir "hola" — se
       // intenta responder con IA antes de caer en el mensaje genérico fijo.
