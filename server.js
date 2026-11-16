@@ -2142,9 +2142,12 @@ async function mostrarResumenFinal(phone, session) {
   const noEncontrados = session.data.productosNoEncontrados || [];
 
   if (confirmados.length === 0) {
-    await sendMessage(phone,
-      `ℹ️ No hay productos para cotizar.\nUn representante te contactará a la brevedad.`
-    );
+    // Si ya se avisó "No encontré X… un representante revisará", no repetir un segundo aviso equivalente
+    if (noEncontrados.length === 0) {
+      await sendMessage(phone,
+        `ℹ️ No hay productos para cotizar.\nUn representante te contactará a la brevedad.`
+      );
+    }
     session.step = STEPS.DONE;
     await notificarInterno(phone, session.data);
     return;
