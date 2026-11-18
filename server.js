@@ -656,7 +656,29 @@ async function buscarContextoCatalogo(session, pregunta) {
   } catch { return ""; }
 }
 
-async function responderConsulta(phone, session, pregunta, cierre = "_Continuemos con tu cotización..._") {
+const CIERRE_POR_DEFECTO = "_Continuemos con tu cotización..._";
+
+// Tras responder una consulta libre, se vuelve a formular la pregunta que el bot
+// dejó pendiente (en vez de un genérico "continuemos"), para que el cliente sepa qué responder.
+function cierrePorPaso(session) {
+  switch (session.step) {
+    case STEPS.WAITING_MAS:
+      return `¿Necesitas cotizar algo más? Responde *sí* para agregar productos o *no* para continuar.`;
+    case STEPS.WAITING_CANTIDAD:
+      return `📦 ¿Cuántas unidades necesitas de este producto?`;
+    case STEPS.CONFIRMANDO:
+      return `¿Es este el producto correcto? Responde *sí* o *no*.`;
+    case STEPS.ELIGIENDO_OPCION:
+    case STEPS.WAITING_FORMATO:
+      return `Responde con el *número* de la opción que necesitas.`;
+    case STEPS.WAITING_PRODUTOS:
+      return `📦 ¿Qué productos necesitas cotizar?`;
+    default:
+      return CIERRE_POR_DEFECTO;
+  }
+}
+
+async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_DEFECTO) {
   if (!anthropicClient) return false;
   try {
     const client = anthropicClient;
@@ -688,7 +710,11 @@ async function responderConsulta(phone, session, pregunta, cierre = "_Continuemo
         `Si no tienes la información exacta, di "un ejecutivo puede ayudarte con eso". ` +
         `NUNCA inventes precios, disponibilidad, ni datos de productos. Los precios SOLO se entregan en la cotización final por correo — si preguntan un precio, di que lo verán en la cotización. ` +
         `Si te preguntan algo fuera del ámbito comercial de CINTEC (política, religión, contenido adulto, temas personales), responde solo: "Estoy aquí para ayudarte con cotizaciones de CINTEC." ` +
-        (catalogo ? `Productos reales de nuestro catálogo relacionados con la consulta (menciona solo estos, sin precios): ${catalogo}. ` : `No hay productos en catálogo que coincidan con la consulta; si preguntan por disponibilidad de un producto puntual, deriva a un ejecutivo. `) +
+        `No hagas preguntas al cliente (el bot continúa solo con la cotización después de tu respuesta) y no pidas cantidades ni presentaciones. ` +
+        (catalogo
+          ? `Productos reales de nuestro catálogo relacionados con la consulta (menciona solo estos, sin precios): ${catalogo}. `
+          : `NO hay ningún producto en el catálogo que coincida con la consulta: NUNCA afirmes que CINTEC tiene o dispone del producto. ` +
+            `Si preguntan por disponibilidad de un producto, responde que no lo ves en el catálogo y que, si lo agrega a su cotización, un ejecutivo revisará disponibilidad. `) +
         (contextLine ? `Contexto de la cotización en curso: ${contextLine}.` : ""),
       messages: [...historial, { role: "user", content: pregunta }],
     });
@@ -698,7 +724,7 @@ async function responderConsulta(phone, session, pregunta, cierre = "_Continuemo
     if (/ejecutivo puede ayudarte|estoy aquí para ayudarte con cotizaciones/i.test(reply)) {
       registrarConversacionProblematica(phone, session, "sin_respuesta", { pregunta, respuestaClaude: reply });
     }
-    await sendMessage(phone, `${reply}\n\n${cierre}`);
+    await sendMessage(phone, `${reply}\n\n${cierre === CIERRE_POR_DEFECTO ? cierrePorPaso(session) : cierre}`);
     return true;
   } catch (err) {
     console.error("Error Claude:", err.message);
@@ -2331,8 +2357,15 @@ function parsearProductos(texto) {
     parte = parte.trim();
     if (parte.length < 2) return;
 
+    // Afirmación + verbo de agregar al inicio: "sí necesito adicionar el jabón" → "jabón"
+    parte = parte.replace(/^(s[ií]|ok|claro|bueno)[,.]?\s+/i, '').trim();
+
     // Limpiar palabras de intención: "necesito lavaloza" → "lavaloza"
     parte = parte.replace(/^(necesito|quiero|quisiera|dame|me das?|busco|requiero|requerimos?|necesitamos?|queremos?|me puedes? (dar|cotizar)|cotizame|preciso|precisamos?)\s+/i, '').trim();
+
+    parte = parte.replace(/^(adicionar|adiciones?|agregar|agrega|a[ñn]adir|sumar|tambi[eé]n|adem[aá]s)\s+/i, '').trim();
+    const sinArticulo = parte.replace(/^(el|la|los|las)\s+/i, '').trim();
+    if (sinArticulo.length > 2) parte = sinArticulo;
 
     // Limpiar prefijos de cantidad+envase: "una caja de X" → "X", "un bidón de X" → "X"
     parte = parte.replace(/^(un[ao]?s?|dos|tres|cuatro|cinco)\s+(caja|bidon|bidones|bolsa|saco|frasco|tarro|balde|tambor|galon|envase|botella|paquete|sobre)s?\s+(de\s+)?/i, '').trim();
