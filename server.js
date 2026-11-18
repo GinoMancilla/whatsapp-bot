@@ -597,7 +597,7 @@ function extraerProductoDeLink(text) {
 // "producto_vago" (menciona "producto" sin decir cuál) | "ninguno".
 function detectarIntencionTexto(text) {
   const t = normalizar(text);
-  const esContacto = /hablar con|contactar|comunicarme|necesito hablar|quiero hablar|hablar con alguien|ejecutivo|asesor|vendedor|persona real|agente|llamarme|me llamen|me pueden llamar|consulta|duda|problema|reclamo|queja|factura|boleta|pedido|horario|direccion|sucursal|informacion/.test(t);
+  const esContacto = /hablar con|contactar|comunicarme|necesito hablar|quiero hablar|hablar con alguien|ejecutivo|asesor|vendedor|persona real|agente|llamarme|me llamen|me pueden llamar|consulta|duda|problema|reclamo|queja|factura|boleta|pedido|horario|direccion|sucursal/.test(t);
   if (esContacto) return "contacto";
   const esCotizacion = /cotizar|cotizacion|precio|necesito|quiero|busco|comprar|pedir|cuanto|cuanto sale|lavaloza|toalla|guante|desinfect|limpiez|higiene|quimico/.test(t);
   if (esCotizacion) return "cotizar";
@@ -959,8 +959,10 @@ async function handleMessage(phone, text) {
     const tNorm = normalizar(text);
     // Tolerante a errores de tipeo en el resto de la frase ("a estel whatsapp"):
     // basta con que mencione la cotización y el canal (whatsapp/este chat), o "pdf".
-    const pideAca = /\bpdf\b/.test(tNorm) ||
-      (/cotizac/.test(tNorm) && /whatsapp|por aqui|por aca|este chat|este medio/.test(tNorm));
+    // Excepción: "te envío por acá los datos" es el cliente entregando sus datos, no pidiendo el PDF.
+    const entregaDatos = /\bte (envio|mando|paso|adjunto|dejo)\b|\blos datos\b/.test(tNorm);
+    const pideAca = !entregaDatos && (/\bpdf\b/.test(tNorm) ||
+      (/cotizac/.test(tNorm) && /whatsapp|por aqui|por aca|este chat|este medio/.test(tNorm)));
     if (pideAca) {
       await reenviarCotizacionPorWhatsapp(phone);
       return;
@@ -1287,6 +1289,16 @@ async function handleMessage(phone, text) {
       break;
 
     case STEPS.DONE: {
+      // El cliente retoma tras una derivación y entrega sus datos (RUT) para cotizar:
+      // se reinicia el flujo con lo que escribió antes, para no perder el producto que pidió.
+      const rutRetomado = text.match(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/);
+      if (rutRetomado && validarRUT(rutRetomado[0])) {
+        const previos = (session.data.mensajesRecientes || []).map(m => m.text).join("\n");
+        session.step = STEPS.START;
+        session.data = { mensajesRecientes: session.data.mensajesRecientes };
+        await handleMessage(phone, previos);
+        break;
+      }
       // Un simple cierre ("gracias", "ok", "listo") no necesita IA -- la IA no
       // tiene contexto de que el PDF ya se mandó recién y termina inventando
       // una respuesta confusa (ej. "un ejecutivo te contactará para enviarla").
@@ -1468,6 +1480,21 @@ async function clasificarIntencion(text) {
 async function manejarContactoNombre(phone, session, text) {
   if (text.length < 2) {
     await sendMessage(phone, `⚠️ Ingresa tu nombre para continuar.`);
+    return;
+  }
+  // El cliente escribió lo que necesita en vez de su nombre (ej. "necesito cotizar
+  // pastillas cloradoras"): guardarlo como nombre sería un error; pasa a cotizar.
+  if (text.trim().split(/\s+/).length > 4 && detectarIntencionTexto(text) === "cotizar") {
+    const extraidos = await extraerDatosIniciales(text);
+    session.data.textoProductos = extraidos?.productos || text.trim();
+    session.step = STEPS.WAITING_RUT;
+    await sendMessage(phone,
+      `📦 ¡Perfecto! Para cotizarte necesito algunos datos.\n\n` +
+      `Si tienes *RUT de empresa*, ingrésalo.\n` +
+      `De lo contrario, ingresa tu *RUT personal*.\n\n` +
+      `_Ej empresa: 76.123.456-7_\n` +
+      `_Ej personal: 12.345.678-9_`
+    );
     return;
   }
   session.data.nombreContacto = text;
