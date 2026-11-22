@@ -1802,7 +1802,8 @@ async function buscarParaClienteNuevo(phone, session, item) {
   let formatoNoEncontrado = false;
   if (item.formatoEspecificado) {
     const fmt = normalizarFormatoStr(item.formatoEspecificado);
-    const filtradosFmt = encontrados.filter(p => normalizar(p.DesProd).includes(fmt));
+    // Ambos lados en unidades canónicas: "250 metros" calza con "TOALLA 250MT" o "250 MTS"
+    const filtradosFmt = encontrados.filter(p => normalizarFormatoStr(normalizar(p.DesProd)).includes(fmt));
     if (filtradosFmt.length > 0) {
       resultado = filtradosFmt;
     } else {
@@ -2342,10 +2343,22 @@ function extraerFormatos(productos) {
   return [...medidas, ...conteos].slice(0, 6);
 }
 
-// Normaliza un string de formato: "5lt"→"5 lt", "10kg"→"10 kg"
+// Normaliza un string de formato a unidades canónicas para poder comparar:
+// "5lt"→"5 lt", "250 metros"→"250 mt", "2 kilos"→"2 kg", "3 unidades"→"3 un"
+const UNIDAD_CANONICA = [
+  [/^(metros?|mts?|m)$/, "mt"],
+  [/^(litros?|lts?|l)$/, "lt"],
+  [/^(kilos?|kilogramos?|kgs?)$/, "kg"],
+  [/^(gramos?|grs?|g)$/, "gr"],
+  [/^(mililitros?|ml)$/, "ml"],
+  [/^(unidades?|unid|un)$/, "un"],
+];
 function normalizarFormatoStr(fmt) {
   return (fmt || "").toLowerCase().trim()
-    .replace(/(\d)\s*(lt|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|metros?|un\b)/gi, '$1 $2').trim();
+    .replace(/(\d)\s*(metros?|mts?|mililitros?|ml|litros?|lts?|kilogramos?|kilos?|kgs?|gramos?|grs?|cc|unidades?|unid|un|m|l|g)\b/gi, (_, d, u) => {
+      const regla = UNIDAD_CANONICA.find(([re]) => re.test(u.toLowerCase()));
+      return `${d} ${regla ? regla[1] : u.toLowerCase()}`;
+    }).trim();
 }
 
 // ─── Parsear texto de productos ───────────────────────────────────────────────
@@ -2377,18 +2390,20 @@ function parsearProductos(texto) {
 
     // Extraer formato inline "x 5lt", "formato 5 lt", "x 10kg", etc.
     let formatoEspecificado = null;
-    const fmtMatch = parte.match(/\s+(?:x|formato)\s+(\d+(?:[.,]\d+)?\s*(?:lt|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|metros?|l\b))\b/i);
+    const fmtMatch = parte.match(/\s+(?:x|formato)\s+(\d+(?:[.,]\d+)?\s*(?:lts?|litros?|kg|kilos?|gr|gramos?|ml|cc|mts?|metros?|l\b|m\b))\b/i);
     if (fmtMatch) {
       formatoEspecificado = normalizarFormatoStr(fmtMatch[1]);
       parte = parte.replace(fmtMatch[0], '').trim();
     }
 
-    const UNIDADES_MEDIDA = /^(lt|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|metros?)$/i;
-    const UNIDADES = `paquetes?|unidades?|cajas?|litros?|kilos?|kg|lt|un|paq|bolsas?|rollos?|bidones?|tambores?|baldes?|galones?|frascos?|tarros?|sachet|sobres?|mt|metros?`;
+    const UNIDADES_MEDIDA = /^(lt|lts|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|mts|metros?|m)$/i;
+    const UNIDADES = `paquetes?|unidades?|cajas?|litros?|kilos?|kg|lts?|un|paq|bolsas?|rollos?|bidones?|tambores?|baldes?|galones?|frascos?|tarros?|sachet|sobres?|mts?|metros?|m`;
     const matchFinal  = parte.match(new RegExp(`^(.+?)\\s+(\\d+)\\s*(${UNIDADES})?$`, 'i'));
     const matchInicio = parte.match(new RegExp(`^(\\d+)\\s*(${UNIDADES})?\\s+(.+)$`, 'i'));
+    // Conectores que quedan pegados al nombre: "toalla de 250 mt", "250 mt de toalla", "toalla x 250"
+    const sinConector = s => s.replace(/\s+(de|del|x|en|formato|por)$/i, '').replace(/^(de|del)\s+/i, '').trim();
     if (matchFinal) {
-      const nombre = normalizar(matchFinal[1]);
+      const nombre = normalizar(sinConector(matchFinal[1]));
       const num  = parseInt(matchFinal[2]);
       const unid = matchFinal[3] || "";
       if (nombre.length > 2) {
@@ -2401,7 +2416,7 @@ function parsearProductos(texto) {
         }
       }
     } else if (matchInicio) {
-      const nombre = normalizar(matchInicio[3]);
+      const nombre = normalizar(sinConector(matchInicio[3]));
       const num  = parseInt(matchInicio[1]);
       const unid = matchInicio[2] || "";
       if (nombre.length > 2) {
