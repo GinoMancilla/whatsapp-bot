@@ -1801,9 +1801,8 @@ async function buscarParaClienteNuevo(phone, session, item) {
   let resultado = encontrados;
   let formatoNoEncontrado = false;
   if (item.formatoEspecificado) {
-    const fmt = normalizarFormatoStr(item.formatoEspecificado);
     // Ambos lados en unidades canónicas: "250 metros" calza con "TOALLA 250MT" o "250 MTS"
-    const filtradosFmt = encontrados.filter(p => normalizarFormatoStr(normalizar(p.DesProd)).includes(fmt));
+    const filtradosFmt = encontrados.filter(p => contieneFormato(p.DesProd, item.formatoEspecificado));
     if (filtradosFmt.length > 0) {
       resultado = filtradosFmt;
     } else {
@@ -1821,7 +1820,7 @@ async function buscarParaClienteNuevo(phone, session, item) {
 
     let msg = `📦 Encontré varias presentaciones de _"${item.nombre}"_.\n\n`;
     msg += `¿Qué formato necesitas?\n\n`;
-    formatos.forEach((f, i) => { msg += `*${i + 1}.* ${f}\n`; });
+    formatos.forEach((f, i) => { msg += `*${i + 1}.* ${etiquetaFormato(f, resultado)}\n`; });
     msg += `\nResponde con el *número* del formato que necesitas.`;
     await sendMessage(phone, msg);
   } else if (formatoNoEncontrado && formatos.length > 1) {
@@ -1832,7 +1831,7 @@ async function buscarParaClienteNuevo(phone, session, item) {
 
     let msg = `ℹ️ No tenemos _"${item.nombre}"_ en formato *${item.formatoEspecificado}*.\n\n`;
     msg += `Los formatos disponibles son:\n\n`;
-    formatos.forEach((f, i) => { msg += `*${i + 1}.* ${f}\n`; });
+    formatos.forEach((f, i) => { msg += `*${i + 1}.* ${etiquetaFormato(f, resultado)}\n`; });
     msg += `\nResponde con el *número* del que necesitas.`;
     await sendMessage(phone, msg);
   } else {
@@ -1851,20 +1850,17 @@ async function manejarFormato(phone, session, text) {
     formatoElegido = formatos[num - 1];
   } else {
     // Buscar coincidencia por texto (ej. "20 kg", "20kg", "5 lt")
-    const textNorm = normalizar(text);
-    formatoElegido = formatos.find(f => normalizar(f).includes(textNorm) || textNorm.includes(normalizar(f)));
+    const textNorm = normalizarFormatoStr(normalizar(text));
+    formatoElegido = formatos.find(f => contieneFormato(textNorm, f));
   }
 
   if (!formatoElegido) {
-    const lista = formatos.map((f, i) => `*${i + 1}.* ${f}`).join("\n");
+    const lista = formatos.map((f, i) => `*${i + 1}.* ${etiquetaFormato(f, session.data.opcionesEncontradas || [])}`).join("\n");
     await sendMessage(phone, `⚠️ No reconocí ese formato. Elige con un número o escribe el formato exacto:\n\n${lista}`);
     await registrarError(phone, session);
     return;
   }
-  const opciones = session.data.opcionesEncontradas.filter(p => {
-    const desc = normalizar(p.DesProd);
-    return desc.includes(normalizar(formatoElegido));
-  });
+  const opciones = session.data.opcionesEncontradas.filter(p => contieneFormato(p.DesProd, formatoElegido));
 
   resetearErrores(session);
   await mostrarOpcionesProducto(phone, session, opciones.length > 0 ? opciones : session.data.opcionesEncontradas, session.data.itemActual);
@@ -2321,6 +2317,23 @@ function buscarEnCatalogo(rows, keywords) {
       return desc.includes(kn) || desc.includes(stem) || cod.includes(kn) || cod.includes(stem);
     });
   });
+}
+
+// ¿La descripción del producto tiene ESE formato? Compara en unidades canónicas y
+// como medida completa ("5 lt" no calza con "25 lt"; "250 mt" calza con "250MT").
+function contieneFormato(desProd, fmt) {
+  const desc = normalizarFormatoStr(normalizar(desProd));
+  const f = normalizarFormatoStr(normalizar(fmt)).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\d.,])${f}\\b`).test(desc);
+}
+
+// Etiqueta legible para la lista de formatos: "2 un — TOALLA DE MANOS PAQ 2 UN (+1)"
+function etiquetaFormato(fmt, productos) {
+  const conFmt = productos.filter(p => contieneFormato(p.DesProd, fmt));
+  if (conFmt.length === 0) return fmt;
+  let nombre = (conFmt[0].DesProd || "").trim();
+  if (nombre.length > 45) nombre = nombre.slice(0, 44).trim() + "…";
+  return `${fmt} — ${nombre}${conFmt.length > 1 ? ` (+${conFmt.length - 1} más)` : ""}`;
 }
 
 // ─── Extraer formatos del texto ───────────────────────────────────────────────
