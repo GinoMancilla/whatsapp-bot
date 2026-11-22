@@ -2787,7 +2787,7 @@ async function transcribirAudio(mediaId, mimeTypeOriginal) {
   if (!GOOGLE_AI_API_KEY || !mediaId) return null;
   try {
     // 1. Meta entrega una URL temporal del archivo a partir del media ID
-    const meta = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
+    const meta = await axios.get(`https://graph.facebook.com/v23.0/${mediaId}`, {
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
     });
     // 2. Descargar el binario (la URL requiere el mismo token)
@@ -2871,7 +2871,7 @@ async function manejarAudio(phone, msg) {
 async function identificarProductoConVision(mediaId, mimeTypeOriginal) {
   if (!anthropicClient || !mediaId) return null;
   try {
-    const meta = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
+    const meta = await axios.get(`https://graph.facebook.com/v23.0/${mediaId}`, {
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
     });
     const file = await axios.get(meta.data.url, {
@@ -2943,7 +2943,7 @@ async function manejarComprobante(phone, msg) {
     const filename = media.filename || `comprobante-${Date.now()}.${ext}`;
 
     // 1. Meta entrega una URL temporal del archivo a partir del media ID
-    const meta = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
+    const meta = await axios.get(`https://graph.facebook.com/v23.0/${mediaId}`, {
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
     });
     // 2. Descargar el binario (la URL requiere el mismo token)
@@ -3377,7 +3377,7 @@ async function notificarInterno(phone, data) {
 async function sendMessage(to, body) {
   try {
     await axios.post(
-      `https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/messages`,
+      `https://graph.facebook.com/v23.0/${WHATSAPP_PHONE_ID}/messages`,
       { messaging_product: "whatsapp", to, type: "text", text: { body } },
       { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
     );
@@ -3393,7 +3393,7 @@ async function subirMediaWhatsapp(buffer, filename, mimeType) {
   const form = new FormData();
   form.append("messaging_product", "whatsapp");
   form.append("file", new Blob([buffer], { type: mimeType }), filename);
-  const resp = await fetch(`https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/media`, {
+  const resp = await fetch(`https://graph.facebook.com/v23.0/${WHATSAPP_PHONE_ID}/media`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
     body: form,
@@ -3405,7 +3405,7 @@ async function subirMediaWhatsapp(buffer, filename, mimeType) {
 
 async function enviarDocumentoWhatsapp(phone, mediaId, filename, caption) {
   await axios.post(
-    `https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/messages`,
+    `https://graph.facebook.com/v23.0/${WHATSAPP_PHONE_ID}/messages`,
     { messaging_product: "whatsapp", to: phone, type: "document", document: { id: mediaId, filename, caption } },
     { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
   );
@@ -3415,7 +3415,7 @@ async function enviarDocumentoWhatsapp(phone, mediaId, filename, caption) {
 async function sendTemplate(to, templateName, bodyParams = []) {
   try {
     await axios.post(
-      `https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/messages`,
+      `https://graph.facebook.com/v23.0/${WHATSAPP_PHONE_ID}/messages`,
       {
         messaging_product: "whatsapp",
         to,
