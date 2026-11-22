@@ -1835,6 +1835,12 @@ async function buscarParaClienteNuevo(phone, session, item) {
     msg += `\nResponde con el *número* del que necesitas.`;
     await sendMessage(phone, msg);
   } else {
+    if (formatoNoEncontrado) {
+      // Pidió un formato que no existe y hay una sola alternativa: avisar antes de ofrecerla
+      await sendMessage(phone,
+        `ℹ️ No tenemos _"${item.nombre}"_ en formato *${item.formatoEspecificado}*.\n` +
+        `Te muestro lo que tenemos disponible:`);
+    }
     await mostrarOpcionesProducto(phone, session, resultado, item);
   }
 }
@@ -2410,11 +2416,29 @@ function parsearProductos(texto) {
     }
 
     const UNIDADES_MEDIDA = /^(lt|lts|litros?|kg|kilos?|gr|gramos?|ml|cc|mt|mts|metros?|m)$/i;
-    const UNIDADES = `paquetes?|unidades?|cajas?|litros?|kilos?|kg|lts?|un|paq|bolsas?|rollos?|bidones?|tambores?|baldes?|galones?|frascos?|tarros?|sachet|sobres?|mts?|metros?|m`;
+    const UNIDADES = `paquetes?|unidades?|cajas?|litros?|kilos?|kg|lts?|un|paq|bolsas?|rollos?|bidones?|tambores?|baldes?|galones?|frascos?|tarros?|sachet|sobres?|mts?|metros?|m|ml|cc|grs?|gramos?`;
     const matchFinal  = parte.match(new RegExp(`^(.+?)\\s+(\\d+)\\s*(${UNIDADES})?$`, 'i'));
     const matchInicio = parte.match(new RegExp(`^(\\d+)\\s*(${UNIDADES})?\\s+(.+)$`, 'i'));
     // Conectores que quedan pegados al nombre: "toalla de 250 mt", "250 mt de toalla", "toalla x 250"
     const sinConector = s => s.replace(/\s+(de|del|x|en|formato|por)$/i, '').replace(/^(de|del)\s+/i, '').trim();
+
+    // Parte que es SOLO cantidad ("dame 5 bidones", "son 10 unidades"): es la cantidad
+    // del producto anterior, no un producto nuevo llamado "5 bidones".
+    const soloCantidad = parte.replace(/^(son|serian|ser[ií]an|en total|total)\s+/i, '')
+      .match(new RegExp(`^(\\d+)\\s*(${UNIDADES})?$`, 'i'));
+    if (soloCantidad && items.length > 0) {
+      const anterior = items[items.length - 1];
+      const num  = parseInt(soloCantidad[1]);
+      const unid = soloCantidad[2] || "";
+      if (unid && UNIDADES_MEDIDA.test(unid)) {
+        if (!anterior.formatoEspecificado) anterior.formatoEspecificado = normalizarFormatoStr(`${num} ${unid}`);
+      } else {
+        anterior.cantidad = num;
+        anterior.unidad = unid || "unidades";
+        anterior.cantidadEspecificada = true;
+      }
+      return;
+    }
     if (matchFinal) {
       const nombre = normalizar(sinConector(matchFinal[1]));
       const num  = parseInt(matchFinal[2]);
