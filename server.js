@@ -38,7 +38,7 @@ const GOOGLE_AI_MODEL_FALLBACK = process.env.GOOGLE_AI_MODEL_FALLBACK || "gemini
 if (!GOOGLE_AI_API_KEY) console.warn("⚠️  GOOGLE_AI_API_KEY no configurado — las notas de voz no se transcribirán (se pedirá al cliente que escriba).");
 
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
-if (!WHATSAPP_APP_SECRET) console.warn("⚠️  WHATSAPP_APP_SECRET no configurado — verificación de firma Meta desactivada. Configúralo en Railway.");
+if (!WHATSAPP_APP_SECRET) console.error("🚫 WHATSAPP_APP_SECRET no configurado — el webhook RECHAZARÁ todos los mensajes de Meta hasta configurarlo (clave secreta de la app, en Configuración → Básica).");
 
 // Números de prueba (pueden usar comandos /reset /status sin afectar clientes reales)
 const TEST_PHONES = new Set(
@@ -54,7 +54,7 @@ if (!process.env.SPECIALIST_TOKEN) console.warn("⚠️  SPECIALIST_TOKEN no con
 
 // ─── Verificación de firma Meta (X-Hub-Signature-256) ─────────────────────────
 function verificarFirmaMeta(req) {
-  if (!WHATSAPP_APP_SECRET) return true; // si no está configurado, se omite (warn en startup)
+  if (!WHATSAPP_APP_SECRET) return false; // sin clave no se puede verificar: se rechaza (falla cerrada)
   const signature = req.headers["x-hub-signature-256"];
   if (!signature) return false;
   const expected = "sha256=" + crypto.createHmac("sha256", WHATSAPP_APP_SECRET)
