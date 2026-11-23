@@ -811,6 +811,14 @@ function validarCambiosPedido(input, nProductos, texto = "") {
     if (a.tipo === "cambiar_formato") return indiceOk && !!a.formato && !!a.producto && a.producto.length > 2 && nombrado(a);
     return false;
   });
+  // "agrega un cloro" con cloro ya en el pedido: la IA a veces manda "agregar" Y
+  // "cambiar_cantidad" con la misma mención. Gana la acción sobre el producto existente.
+  const mencionNorm = a => normalizar(String(a.mencion || "")).trim();
+  for (const ag of acciones.filter(a => a.tipo === "agregar" && mencionNorm(a))) {
+    if (acciones.some(o => o !== ag && o.tipo !== "agregar" && mencionNorm(o) === mencionNorm(ag))) {
+      acciones.splice(acciones.indexOf(ag), 1);
+    }
+  }
   // Formato y cantidad del mismo producto llegan a veces como dos acciones: unirlas
   for (const f of acciones.filter(a => a.tipo === "cambiar_formato")) {
     const cant = acciones.find(a => a.tipo === "cambiar_cantidad" && a.indice === f.indice);
@@ -1477,8 +1485,12 @@ async function handleMessage(phone, text) {
         await sendMessage(phone, `⚠️ Ingresa una dirección de entrega válida (calle, comuna y ciudad).`);
         break;
       }
+      // "Agrega 10 paquetes de toalla de 250 y despáchalo a Puerto Montt" tiene números y
+      // comuna (parece dirección) pero es un cambio del pedido: con señales de cambio se
+      // prueba primero como corrección. Si trae calle y número, la IA lo devuelve como dirección.
+      if (SENALES_CAMBIO.test(normalizar(text)) && await intentarCambioPedido(phone, session, text)) break;
       if (!pareceDireccion(text)) {
-        // "En el lavaloza quiero el de 5 litros…": primero se intenta como cambio del pedido
+        // "En el lavaloza quiero el de 5 litros…": se intenta como cambio del pedido
         if (await intentarCambioPedido(phone, session, text)) break;
         // Si no es un cambio ("disculpa, ¿cuánto demora?"), la IA responde con el
         // contexto del pedido y se vuelve a pedir la dirección, sin avanzar.
