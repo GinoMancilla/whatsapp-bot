@@ -744,6 +744,202 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
   }
 }
 
+// ─── Correcciones a mitad del pedido ──────────────────────────────────────────
+// Cuando ya hay productos en el pedido y el cliente escribe algo que NO es la
+// respuesta esperada ("en el lavaloza quiero el de 5 litros, agrega 10 paquetes de
+// toalla y despáchalo a Puerto Montt"), la IA lo traduce a acciones estructuradas
+// (tool use forzado). El bot las valida y las aplica con el flujo normal: los
+// productos nuevos o con otro formato pasan por la misma búsqueda de catálogo,
+// y al final se muestra el resumen actualizado para que el cliente lo revise.
+const SENALES_CAMBIO = /\b(cambia\w*|en vez|en lugar|mejor|no el|no la|no los|no las|no era|no es (ese|esa)|me equivoque|equivoque|saca\w*|quita\w*|elimina\w*|borra\w*|no me pregunt\w*|corrig\w*|modific\w*|que sean|agrega\w*|anad\w*|suma\w*|tambien|ademas|el de \d|la de \d|despach\w*)\b/;
+
+const TOOL_CAMBIOS_PEDIDO = {
+  name: "registrar_cambios_pedido",
+  description: "Registra los cambios que el cliente pide sobre su pedido en curso.",
+  input_schema: {
+    type: "object",
+    properties: {
+      es_cambio_de_pedido: {
+        type: "boolean",
+        description: "true SOLO si el cliente pide un cambio concreto (agregar, quitar, cambiar cantidad o formato) o indica dónde despachar. false si solo pregunta, saluda, agradece o reclama sin decir qué cambiar.",
+      },
+      acciones: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            tipo: { type: "string", enum: ["agregar", "quitar", "cambiar_cantidad", "cambiar_formato"] },
+            indice: { type: "integer", description: "Número del producto en el pedido actual (1, 2, …). Obligatorio para quitar, cambiar_cantidad y cambiar_formato." },
+            mencion: { type: "string", description: "Palabras EXACTAS del mensaje del cliente que nombran el producto afectado (ej: 'el cloro', 'lavalosa'). Vacío si el cliente no lo nombra." },
+            producto: { type: "string", description: "Término de búsqueda corto del producto, en minúsculas, sin marca ni formato (ej: 'lavaloza', 'toalla', 'cloro'). Obligatorio para agregar y cambiar_formato." },
+            cantidad: { type: "integer", description: "Cantidad pedida, solo si la dijo explícitamente." },
+            formato: { type: "string", description: "Presentación con número y unidad (ej: '5 lt', '250 mt', '750 ml', '10 kg'), solo si la dijo." },
+          },
+          required: ["tipo"],
+        },
+      },
+      comuna_entrega: { type: "string", description: "Comuna o ciudad de despacho, solo si la mencionó (ej: 'Puerto Montt')." },
+      direccion_entrega: { type: "string", description: "Dirección de despacho con calle y número, solo si la entregó completa." },
+    },
+    required: ["es_cambio_de_pedido", "acciones"],
+  },
+};
+
+// Descarta acciones incompletas o fuera de rango: la IA propone, el bot decide.
+// `texto` es el mensaje original: si hay más de un producto, un cambio sobre uno
+// existente solo vale si el cliente lo nombró ("que sean 3" a secas es ambiguo).
+function validarCambiosPedido(input, nProductos, texto = "") {
+  if (!input || typeof input !== "object") return null;
+  const msgNorm = normalizar(texto);
+  const nombrado = a => {
+    if (nProductos <= 1) return true;
+    const m = normalizar(String(a.mencion || "")).replace(/^(el|la|los|las|del|de la)\s+/, "").trim();
+    return m.length > 2 && msgNorm.includes(m);
+  };
+  const acciones = (Array.isArray(input.acciones) ? input.acciones : []).filter(a => {
+    if (!a || !["agregar", "quitar", "cambiar_cantidad", "cambiar_formato"].includes(a.tipo)) return false;
+    if (a.cantidad != null && !(Number.isInteger(a.cantidad) && a.cantidad > 0 && a.cantidad <= 100000)) delete a.cantidad;
+    if (a.formato != null) {
+      a.formato = normalizarFormatoStr(normalizar(String(a.formato)));
+      if (!/\d/.test(a.formato)) delete a.formato;
+    }
+    if (a.producto != null) a.producto = normalizar(String(a.producto)).slice(0, 60).trim();
+    const indiceOk = Number.isInteger(a.indice) && a.indice >= 1 && a.indice <= nProductos;
+    if (a.tipo === "agregar") return !!a.producto && a.producto.length > 2;
+    if (a.tipo === "quitar") return indiceOk && nombrado(a);
+    if (a.tipo === "cambiar_cantidad") return indiceOk && a.cantidad != null && nombrado(a);
+    if (a.tipo === "cambiar_formato") return indiceOk && !!a.formato && !!a.producto && a.producto.length > 2 && nombrado(a);
+    return false;
+  });
+  // Formato y cantidad del mismo producto llegan a veces como dos acciones: unirlas
+  for (const f of acciones.filter(a => a.tipo === "cambiar_formato")) {
+    const cant = acciones.find(a => a.tipo === "cambiar_cantidad" && a.indice === f.indice);
+    if (cant) { if (f.cantidad == null) f.cantidad = cant.cantidad; acciones.splice(acciones.indexOf(cant), 1); }
+  }
+  const comuna = typeof input.comuna_entrega === "string" ? input.comuna_entrega.trim().slice(0, 60) : "";
+  const direccion = typeof input.direccion_entrega === "string" ? input.direccion_entrega.trim().slice(0, 150) : "";
+  const hayAlgo = acciones.length > 0 || comuna || (direccion && pareceDireccion(direccion));
+  if (!input.es_cambio_de_pedido || !hayAlgo) return { esCambio: false, acciones: [] };
+  return { esCambio: true, acciones, comuna, direccion: pareceDireccion(direccion) ? direccion : "" };
+}
+
+async function interpretarCambiosPedido(session, texto) {
+  if (!anthropicClient) return null;
+  const confirmados = session.data.productosConfirmados || [];
+  const pedido = confirmados
+    .map((p, i) => `${i + 1}. ${p.seleccionado?.DesProd || "?"} — cantidad: ${p.cantidad} ${p.unidad || "unidades"}`)
+    .join("\n") || "(vacío)";
+  try {
+    const response = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001", // mismo modelo que el resto del bot: rápido y económico
+      max_tokens: 500,
+      system:
+        `Eres el intérprete de pedidos del bot de cotizaciones de CINTEC (productos de limpieza e higiene industrial, Chile). ` +
+        `Recibes el pedido actual numerado y un mensaje del cliente (puede venir de un audio transcrito, con errores como "lavalosa"). ` +
+        `Traduce SOLO los cambios concretos que pide, usando la herramienta. Reglas:\n` +
+        `- Para referirte a un producto ya pedido usa su número en "indice" (ej: "el lavaloza" → el que contiene LAVALOZA).\n` +
+        `- "quiero el de 5 litros y no el de 750" → cambiar_formato de ese producto, formato "5 lt", producto = término corto ("lavaloza").\n` +
+        `- Productos nuevos → agregar, con cantidad y formato solo si los dijo ("10 paquetes de toalla de 250 metros" → producto "toalla", cantidad 10, formato "250 mt").\n` +
+        `- "saca/quita/elimina X" → quitar. "que sean 3", "mejor 10 del cloro" → cambiar_cantidad.\n` +
+        `- En "mencion" copia las palabras exactas del mensaje que nombran el producto afectado.\n` +
+        `- Si el cliente no nombra el producto y hay varios ("que sean 3"), NO incluyas esa acción.\n` +
+        `- Comuna o ciudad de despacho → comuna_entrega. Calle y número → direccion_entrega.\n` +
+        `- Si solo pregunta, reclama sin pedir nada concreto, saluda o agradece: es_cambio_de_pedido=false y acciones vacías.\n` +
+        `- Nunca inventes productos, cantidades ni formatos que el cliente no dijo.`,
+      tools: [TOOL_CAMBIOS_PEDIDO],
+      tool_choice: { type: "tool", name: TOOL_CAMBIOS_PEDIDO.name },
+      messages: [{ role: "user", content: `Pedido actual:\n${pedido}\n\nMensaje del cliente: "${texto.slice(0, 800)}"` }],
+    });
+    const bloque = response.content.find(b => b.type === "tool_use");
+    return validarCambiosPedido(bloque?.input, confirmados.length, texto);
+  } catch (err) {
+    console.error("Error interpretando cambios del pedido:", err.message);
+    return null;
+  }
+}
+
+// Aplica los cambios ya validados y retoma el flujo. Devuelve true si atendió el mensaje.
+async function aplicarCambiosPedido(phone, session, cambios) {
+  const confirmados = session.data.productosConfirmados || [];
+  const lineas = [];
+  const quitar = new Set();
+  const nuevos = [];
+
+  for (const a of cambios.acciones) {
+    const idx = (a.indice || 0) - 1;
+    const p = confirmados[idx];
+    if (a.tipo === "quitar" && p && !quitar.has(idx)) {
+      quitar.add(idx);
+      lineas.push(`🗑️ Quité: ${p.seleccionado.DesProd}`);
+    } else if (a.tipo === "cambiar_cantidad" && p && !quitar.has(idx)) {
+      p.cantidad = a.cantidad;
+      p.unidad = "unidades";
+      lineas.push(`🔢 ${p.seleccionado.DesProd}: ahora *${a.cantidad} unidades*`);
+    } else if (a.tipo === "cambiar_formato" && p && !quitar.has(idx)) {
+      quitar.add(idx);
+      nuevos.push({
+        nombre: a.producto,
+        cantidad: a.cantidad || p.cantidad,
+        unidad: a.cantidad ? "unidades" : p.unidad,
+        cantidadEspecificada: true,
+        formatoEspecificado: a.formato,
+      });
+      lineas.push(`🔄 Cambio _${a.producto}_ al formato *${a.formato}*`);
+    } else if (a.tipo === "agregar") {
+      nuevos.push({
+        nombre: a.producto,
+        cantidad: a.cantidad || 1,
+        unidad: "unidades",
+        cantidadEspecificada: !!a.cantidad,
+        formatoEspecificado: a.formato || null,
+      });
+      lineas.push(`➕ Agrego: _${a.producto}${a.formato ? ` ${a.formato}` : ""}_${a.cantidad ? ` × ${a.cantidad}` : ""}`);
+    }
+  }
+  session.data.productosConfirmados = confirmados.filter((_, i) => !quitar.has(i));
+
+  if (cambios.direccion) {
+    session.data.direccionEntrega = cambios.direccion;
+    session.data.requiereFlete = clasificarZonaEntrega(cambios.direccion) === "fuera";
+    lineas.push(`🚚 Despacho a: ${cambios.direccion}`);
+  } else if (cambios.comuna) {
+    session.data.comunaEntrega = cambios.comuna;
+    lineas.push(`🚚 Despacho a: ${cambios.comuna} (te pediré calle y número)`);
+  }
+
+  if (lineas.length === 0) return false;
+  registrarConsulta(phone, "[cambio de pedido]", lineas.join(" | ")); // auditoría
+  await sendMessage(phone, `✏️ *Actualicé tu pedido:*\n\n${lineas.join("\n")}`);
+
+  if (nuevos.length > 0) {
+    session.data.itemsPendientes = nuevos;
+    if (!session.data.rows) session.data.rows = await cargarCSV();
+    if (!session.data.rows) {
+      await sendMessage(phone, `⚠️ Error al acceder al catálogo. Intenta nuevamente en unos segundos.`);
+      return true;
+    }
+    if (!session.data.productosNoEncontrados) session.data.productosNoEncontrados = [];
+    if (!session.data.productosBajoMargen) session.data.productosBajoMargen = [];
+    await sendMessage(phone, `🔍 Buscando en nuestro catálogo...`);
+    await procesarSiguienteProducto(phone, session);
+  } else if (session.data.productosConfirmados.length === 0) {
+    session.step = STEPS.WAITING_PRODUTOS;
+    await sendMessage(phone, `Tu pedido quedó vacío. 📦 ¿Qué productos necesitas cotizar?`);
+  } else {
+    await mostrarResumenFinal(phone, session);
+  }
+  return true;
+}
+
+// Punto de entrada: intenta tratar el mensaje como corrección del pedido.
+// Devuelve true si lo atendió; false para que el paso siga con su lógica habitual.
+async function intentarCambioPedido(phone, session, text) {
+  if (!(session.data.productosConfirmados || []).length) return false;
+  const cambios = await interpretarCambiosPedido(session, text);
+  if (!cambios || !cambios.esCambio) return false;
+  return aplicarCambiosPedido(phone, session, cambios);
+}
+
 // Palabras de envase/cantidad/intención que no deben usarse como keyword de producto
 const STOP_WORDS_ENVASE = new Set([
   "bidon", "bidones", "bolsa", "bolsas", "saco", "sacos",
@@ -1024,7 +1220,11 @@ async function handleMessage(phone, text) {
     STEPS.WAITING_PRODUTOS, STEPS.CONFIRMANDO, STEPS.WAITING_FORMATO,
     STEPS.ELIGIENDO_OPCION, STEPS.WAITING_MAS, STEPS.WAITING_CANTIDAD,
   ]);
-  if (stepsConversacionales.has(session.step) && esUnaConsulta(text)) {
+  // Una corrección del pedido con forma de pregunta ("¿me cambias el lavaloza a 5 litros?")
+  // en "¿algo más?" la atiende manejarMasProductos, no la IA de consultas.
+  const esCorreccionEnMas = session.step === STEPS.WAITING_MAS &&
+    (session.data.productosConfirmados || []).length > 0 && SENALES_CAMBIO.test(normalizar(text));
+  if (stepsConversacionales.has(session.step) && esUnaConsulta(text) && !esCorreccionEnMas) {
     const atendido = await responderConsulta(phone, session, text);
     if (atendido) return;
   }
@@ -1278,8 +1478,10 @@ async function handleMessage(phone, text) {
         break;
       }
       if (!pareceDireccion(text)) {
-        // "Disculpa, en el lavaloza no me preguntaste…" no es una dirección: se responde
-        // (IA con contexto del pedido) y se vuelve a pedir la dirección, sin avanzar.
+        // "En el lavaloza quiero el de 5 litros…": primero se intenta como cambio del pedido
+        if (await intentarCambioPedido(phone, session, text)) break;
+        // Si no es un cambio ("disculpa, ¿cuánto demora?"), la IA responde con el
+        // contexto del pedido y se vuelve a pedir la dirección, sin avanzar.
         const atendido = await responderConsulta(phone, session, text, cierrePorPaso(session));
         if (!atendido) {
           await sendMessage(phone,
@@ -1289,8 +1491,10 @@ async function handleMessage(phone, text) {
         }
         break;
       }
-      session.data.direccionEntrega = text;
-      session.data.requiereFlete = clasificarZonaEntrega(text) === "fuera";
+      // Si antes dijo la comuna ("despáchalo a Puerto Montt") y ahora solo da calle y número
+      session.data.direccionEntrega = session.data.comunaEntrega && clasificarZonaEntrega(text) === "desconocida"
+        ? `${text}, ${session.data.comunaEntrega}` : text;
+      session.data.requiereFlete = clasificarZonaEntrega(session.data.direccionEntrega) === "fuera";
       session.step = STEPS.WAITING_EMAIL;
       if (session.data.requiereFlete) {
         await sendMessage(phone,
@@ -1306,6 +1510,7 @@ async function handleMessage(phone, text) {
 
     case STEPS.WAITING_EMAIL:
       if (!text.includes("@") || !text.includes(".")) {
+        if (await intentarCambioPedido(phone, session, text)) break;
         const reencauceMail = pareceFueraDeTema(text)
           ? `😊 Estoy aquí solo para ayudarte con tu cotización de CINTEC.\n\n`
           : "";
@@ -2064,6 +2269,8 @@ async function manejarMasProductos(phone, session, text) {
       `📦 ¿Qué más necesitas?\n_Indica producto y cantidad:_\n_"papel higienico 3 paquetes"_`
     );
   } else {
+    // ¿Es una corrección del pedido ("saca el cloro", "el lavaloza mejor de 5 litros")?
+    if (SENALES_CAMBIO.test(textNorm) && await intentarCambioPedido(phone, session, text)) return;
     // El cliente escribió directamente un producto en vez de sí/no
     session.data.textoProductos = text;
     session.data.itemsPendientes = parsearProductos(text);
@@ -2261,8 +2468,24 @@ async function mostrarResumenFinal(phone, session) {
     msg += `ℹ️ No encontrado en catálogo: ${noEncontrados.join(", ")}\nUn representante revisará disponibilidad.\n\n`;
   }
 
-  msg += `📦 ¿Cuál es la *dirección de entrega*? (calle, comuna y ciudad)`;
-  session.step = STEPS.WAITING_ENTREGA;
+  msg += `✏️ _Si algo no está bien, dime qué cambiar (ej: "saca el cloro" o "que sean 3")._\n\n`;
+
+  if (session.data.direccionEntrega) {
+    // Volvió al resumen tras corregir el pedido: la dirección ya la dio
+    msg += `🚚 Despacho a: ${session.data.direccionEntrega}\n`;
+    if (session.data.requiereFlete) {
+      msg += `ℹ️ En esa comuna *no realizamos entregas directas*: el envío va por flete externo y un ejecutivo te confirmará su costo.\n`;
+    }
+    msg += `\n`;
+    msg += `📧 ¿A qué *correo electrónico* enviamos la cotización?`;
+    session.step = STEPS.WAITING_EMAIL;
+  } else if (session.data.comunaEntrega) {
+    msg += `📦 Anoté despacho a *${session.data.comunaEntrega}*. ¿Cuál es la *calle y número*?`;
+    session.step = STEPS.WAITING_ENTREGA;
+  } else {
+    msg += `📦 ¿Cuál es la *dirección de entrega*? (calle, comuna y ciudad)`;
+    session.step = STEPS.WAITING_ENTREGA;
+  }
   await sendMessage(phone, msg);
 }
 
