@@ -2886,19 +2886,30 @@ async function transcribirAudio(mediaId, mimeTypeOriginal) {
     //    Prueba el modelo principal y, si no está disponible (404) o está
     //    saturado incluso tras reintentar (503/429), cae al modelo de respaldo —
     //    así el bot no queda ciego cada vez que Google rota sus modelos.
-    const pedirTranscripcion = (modelo) => axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GOOGLE_AI_API_KEY}`,
-      {
+    //    maxOutputTokens alto + pensamiento mínimo: los modelos Gemini 3 "piensan" con
+    //    el mismo presupuesto de salida, y con 300 tokens cortaban la transcripción
+    //    ("Disculpa, pero en el lavalosa no me…"). Transcribir no necesita pensar.
+    const pedirTranscripcion = async (modelo) => {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GOOGLE_AI_API_KEY}`;
+      const cuerpo = (conThinking) => ({
         contents: [{
           parts: [
-            { text: "Transcribe textualmente en español lo que dice este audio. Responde SOLO con la transcripción, sin comillas ni comentarios adicionales. Si el audio no tiene voz entendible, responde exactamente: [SIN_AUDIO]" },
+            { text: "Transcribe textualmente en español lo que dice este audio, completo de principio a fin. Responde SOLO con la transcripción, sin comillas ni comentarios adicionales. Si el audio no tiene voz entendible, responde exactamente: [SIN_AUDIO]" },
             { inline_data: { mime_type: mimeType, data: base64Audio } },
           ],
         }],
-        generationConfig: { maxOutputTokens: 300 },
-      },
-      { timeout: 20_000 }
-    );
+        generationConfig: conThinking
+          ? { maxOutputTokens: 2048, thinkingConfig: { thinkingLevel: "minimal" } }
+          : { maxOutputTokens: 2048 },
+      });
+      try {
+        return await axios.post(url, cuerpo(true), { timeout: 30_000 });
+      } catch (err) {
+        // Un modelo que no acepte thinkingConfig responde 400: reintentar sin esa opción
+        if (err.response?.status === 400) return axios.post(url, cuerpo(false), { timeout: 30_000 });
+        throw err;
+      }
+    };
 
     const modelos = [...new Set([GOOGLE_AI_MODEL, GOOGLE_AI_MODEL_FALLBACK])];
     let resp, ultimoError;
@@ -2918,7 +2929,13 @@ async function transcribirAudio(mediaId, mimeTypeOriginal) {
     }
     if (!resp) throw ultimoError;
 
-    const texto = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    const candidato = resp.data?.candidates?.[0];
+    // Unir todas las partes de texto (sin las de "pensamiento"), no solo la primera
+    const texto = (candidato?.content?.parts || [])
+      .filter(p => p.text && !p.thought).map(p => p.text).join("").trim();
+    if (candidato?.finishReason === "MAX_TOKENS") {
+      console.warn("⚠️ Transcripción cortada por límite de tokens (audio muy largo):", texto.slice(0, 80));
+    }
     if (!texto || texto.includes("[SIN_AUDIO]")) return null;
     return texto;
   } catch (err) {
