@@ -531,6 +531,16 @@ const LOCALIDADES_FUERA = [
   "porvenir", "puerto williams",
 ];
 
+// ¿El texto parece una dirección? Número de calle, comuna conocida o palabra de dirección.
+// Evita tomar como dirección un reclamo o pregunta ("disculpa, no me preguntaste…").
+function pareceDireccion(text) {
+  const d = normalizar(text);
+  if (/\?/.test(text) || /^(disculpa|perdon|oye|pero|por ?que|no me|como|cuando|cuanto)\b/.test(d)) return false;
+  if (/\d/.test(d)) return true;
+  if (clasificarZonaEntrega(text) !== "desconocida") return true;
+  return /\b(calle|avenida|av|pasaje|psje|camino|villa|poblacion|sector|parcela|ruta|km|block|depto|departamento|condominio|lote|sitio|esquina)\b/.test(d);
+}
+
 function clasificarZonaEntrega(direccion) {
   const d = normalizar(direccion);
   const contiene = lista => lista.some(c => new RegExp(`\\b${c}\\b`).test(d));
@@ -673,6 +683,8 @@ function cierrePorPaso(session) {
       return `Responde con el *número* de la opción que necesitas.`;
     case STEPS.WAITING_PRODUTOS:
       return `📦 ¿Qué productos necesitas cotizar?`;
+    case STEPS.WAITING_ENTREGA:
+      return `📦 ¿Cuál es la *dirección de entrega*? (calle, número, comuna y ciudad)`;
     default:
       return CIERRE_POR_DEFECTO;
   }
@@ -1265,6 +1277,18 @@ async function handleMessage(phone, text) {
         await sendMessage(phone, `⚠️ Ingresa una dirección de entrega válida (calle, comuna y ciudad).`);
         break;
       }
+      if (!pareceDireccion(text)) {
+        // "Disculpa, en el lavaloza no me preguntaste…" no es una dirección: se responde
+        // (IA con contexto del pedido) y se vuelve a pedir la dirección, sin avanzar.
+        const atendido = await responderConsulta(phone, session, text, cierrePorPaso(session));
+        if (!atendido) {
+          await sendMessage(phone,
+            `🤔 No reconocí una dirección en tu mensaje.\n\n` +
+            `📦 ¿Cuál es la *dirección de entrega*? (calle, número, comuna y ciudad)\n` +
+            `_Si quieres cambiar algo del pedido, escribe *hola* para empezar de nuevo._`);
+        }
+        break;
+      }
       session.data.direccionEntrega = text;
       session.data.requiereFlete = clasificarZonaEntrega(text) === "fuera";
       session.step = STEPS.WAITING_EMAIL;
@@ -1807,6 +1831,11 @@ async function buscarParaClienteNuevo(phone, session, item) {
       resultado = filtradosFmt;
     } else {
       formatoNoEncontrado = true; // el formato pedido no existe, mostramos lo disponible
+      // La cantidad era para el formato pedido ("5 bidones" de 5 lt): con otro formato no
+      // vale, se vuelve a preguntar después de que elija la alternativa.
+      item.cantidadEspecificada = false;
+      item.cantidad = 1;
+      item.unidad = "unidades";
     }
   }
 
