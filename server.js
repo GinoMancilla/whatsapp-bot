@@ -1615,7 +1615,18 @@ async function manejarMenuInicio(phone, session, text) {
     return;
   }
 
+  // "Necesito cotizar virkon": guardar el producto mencionado para no
+  // volver a preguntarlo después del RUT y el nombre.
+  const guardarProductoMencionado = async () => {
+    if (/^1$/.test(t) || text.trim().length < 8) return;
+    const extraidos = await extraerDatosIniciales(text);
+    if (extraidos?.productos && extraidos.productos.length >= 3) {
+      session.data.textoProductos = extraidos.productos;
+    }
+  };
+
   if (esCotizacion) {
+    await guardarProductoMencionado();
     session.step = STEPS.WAITING_RUT;
     await sendMessage(phone,
       `📦 ¡Perfecto! Para cotizarte necesito algunos datos.\n\n` +
@@ -1630,6 +1641,7 @@ async function manejarMenuInicio(phone, session, text) {
   // Las regex no reconocieron el mensaje → clasificar intención con Claude
   const intencion = await clasificarIntencion(text);
   if (intencion === "cotizar") {
+    await guardarProductoMencionado();
     session.step = STEPS.WAITING_RUT;
     await sendMessage(phone,
       `📦 ¡Perfecto! Para cotizarte necesito algunos datos.\n\n` +
