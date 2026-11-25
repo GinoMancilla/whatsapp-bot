@@ -93,7 +93,102 @@ const DATOS_BANCARIOS_HTML = `
   </div>`;
 
 // ─── Instancias globales (evitar recrear en cada llamada) ─────────────────────
-const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+// ─── Correo: API de CERM (servidor CINTEC) o Resend (ambiente de pruebas) ────
+// Si están las variables CERM_MAIL_*, el bot envía por la API intermedia de CERM
+// (casilla real de CINTEC en M365). Expone la misma interfaz que Resend
+// (emails.send) para que todos los envíos existentes funcionen sin cambios.
+const CERM_MAIL_URL     = (process.env.CERM_MAIL_URL || "").replace(/\/+$/, "");
+const CERM_MAIL_SISTEMA = process.env.CERM_MAIL_SISTEMA;
+const CERM_MAIL_TOKEN   = process.env.CERM_MAIL_TOKEN;
+const CERM_MAIL_FROM    = process.env.CERM_MAIL_FROM;
+const CERM_EXT_ADMITIDAS = /\.(pdf|docx?|xlsx?|pptx?|txt|csv|jpe?g|gif|png|zip|7z)$/i;
+
+function adjuntosParaCerm(attachments = []) {
+  const aceptados = [], omitidos = [];
+  for (const a of attachments) {
+    let nombre = String(a.filename || "adjunto").replace(/[\\/\x00-\x1f]/g, "_").slice(-200);
+    if (/\.json$/i.test(nombre)) nombre += ".txt"; // texto: la API no admite .json
+    if (!CERM_EXT_ADMITIDAS.test(nombre)) { omitidos.push(nombre); continue; }
+    aceptados.push({ nombre, buffer: Buffer.isBuffer(a.content) ? a.content : Buffer.from(String(a.content), "base64") });
+  }
+  return { aceptados, omitidos };
+}
+
+function crearClienteCerm() {
+  const headers = { "X-COD-Sistema": CERM_MAIL_SISTEMA, Authorization: `Bearer ${CERM_MAIL_TOKEN}` };
+
+  // Consulta el resultado del envío (la API encola: PDTE → PROCESO → OK/NOK)
+  function vigilarEstado(idx, asunto, intento = 1) {
+    setTimeout(async () => {
+      try {
+        const r = await fetch(`${CERM_MAIL_URL}/api/correos/${idx}`, { headers, signal: AbortSignal.timeout(15000) });
+        const j = await r.json().catch(() => ({}));
+        if (j.estado === "OK") return;
+        if (j.estado === "NOK") return console.error(`❌ CORREO NOK (CERM) idx=${idx} — "${asunto}". Revisar con CERM antes de reenviar.`);
+        if (intento < 6) return vigilarEstado(idx, asunto, intento + 1);
+        console.error(`⚠️ CORREO sin confirmar (CERM) idx=${idx} estado=${j.estado || r.status} — "${asunto}"`);
+      } catch (e) {
+        if (intento < 6) vigilarEstado(idx, asunto, intento + 1);
+        else console.error(`⚠️ No se pudo consultar estado de correo idx=${idx}: ${e.message}`);
+      }
+    }, 30000 * intento);
+  }
+
+  async function send({ to, subject, html, attachments }) {
+    const idSolicitudOrigen = `botcintec-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+    const { aceptados, omitidos } = adjuntosParaCerm(attachments);
+    if (omitidos.length) {
+      html += `<p style="color:#888;font-size:12px">Adjunto no enviado (formato no admitido por el servidor de correo): ${omitidos.map(escapeHtml).join(", ")}. Revisarlo en WhatsApp.</p>`;
+    }
+    const para = Array.isArray(to) ? to : [to];
+
+    const armarCuerpo = () => {
+      if (!aceptados.length) {
+        return { body: JSON.stringify({ idSolicitudOrigen, desde: CERM_MAIL_FROM, para, asunto: subject, cuerpo: html, formatoCuerpo: "HTML" }),
+                 extra: { "Content-Type": "application/json; charset=utf-8" } };
+      }
+      const fd = new FormData();
+      fd.append("idSolicitudOrigen", idSolicitudOrigen);
+      fd.append("desde", CERM_MAIL_FROM);
+      for (const p of para) fd.append("para", p);
+      fd.append("asunto", subject);
+      fd.append("cuerpo", html);
+      fd.append("formatoCuerpo", "HTML");
+      for (const a of aceptados) fd.append("adjuntos", new Blob([a.buffer]), a.nombre);
+      return { body: fd, extra: {} };
+    };
+
+    // Reintentos ante corte o 503 con la MISMA clave: la API no duplica el correo
+    let ultimoError = "";
+    for (let intento = 1; intento <= 3; intento++) {
+      try {
+        const { body, extra } = armarCuerpo();
+        const r = await fetch(`${CERM_MAIL_URL}/api/correos`, {
+          method: "POST", headers: { ...headers, ...extra }, body, signal: AbortSignal.timeout(30000),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 202 || r.status === 200) {
+          vigilarEstado(j.idx, subject);
+          return { data: { id: j.idx }, error: null };
+        }
+        ultimoError = `${r.status} ${j.codigo || ""} ${j.mensaje || ""} traceId=${j.traceId || "-"}`.trim();
+        if (r.status !== 503) break;
+      } catch (e) {
+        ultimoError = e.message;
+      }
+      await new Promise(res => setTimeout(res, 3000 * intento));
+    }
+    console.error(`❌ Error enviando correo por CERM ("${subject}"): ${ultimoError}`);
+    return { data: null, error: { message: ultimoError } };
+  }
+
+  return { emails: { send } };
+}
+
+const usarCorreoCerm = !!(CERM_MAIL_URL && CERM_MAIL_SISTEMA && CERM_MAIL_TOKEN && CERM_MAIL_FROM);
+const resendClient = usarCorreoCerm ? crearClienteCerm()
+  : RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+console.log(`📧 Correo: ${usarCorreoCerm ? "API de CERM" : resendClient ? "Resend" : "DESACTIVADO"}`);
 const anthropicClient = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
