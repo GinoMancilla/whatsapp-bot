@@ -274,7 +274,7 @@ setInterval(() => crearRespaldo("diario"), 24 * 60 * 60 * 1000); // respaldo dia
 
 // ─── Registro de conversaciones (auditoría interna) ───────────────────────────
 // Guarda cada consulta libre del cliente y la respuesta del asistente inteligente.
-function registrarConsulta(phone, pregunta, respuesta) {
+function registrarConsulta(phone, pregunta, respuesta, contacto) {
   if (TEST_PHONES.has(phone)) return; // los números de prueba no generan datos
   cotizacionesLog.push({
     id:        `CONS-${Date.now()}`,
@@ -283,6 +283,7 @@ function registrarConsulta(phone, pregunta, respuesta) {
     phone,
     pregunta:  (pregunta  || "").slice(0, 500),
     respuesta: (respuesta || "").slice(0, 1000),
+    ...(contacto ? { contacto } : {}), // nombre, empresa y contacto de quien consultó
   });
   guardarLog();
 }
@@ -576,6 +577,9 @@ const STEPS = {
   WAITING_CANTIDAD:   "waiting_cantidad",
   WEB_CONTACTO:       "web_contacto",
   DATOS_PREVIOS:      "datos_previos",
+  LEAD_NOMBRE:        "lead_nombre",
+  LEAD_EMPRESA:       "lead_empresa",
+  LEAD_CONTACTO:      "lead_contacto",
   WAITING_MAS:        "waiting_mas",
   WAITING_ENTREGA:    "waiting_entrega",
   WAITING_EMAIL:      "waiting_email",
@@ -913,7 +917,7 @@ function productoReferido(session, texto) {
   const opciones = session.data.opcionesActuales || [];
   const enPantalla = [STEPS.ELIGIENDO_OPCION, STEPS.CONFIRMANDO].includes(session.step);
   if (enPantalla && opciones.length === 1) return catalogoWeb.porSku(opciones[0].CodProd);
-  const num = normalizar(texto).match(/\b(?:el|la|opcion|numero|n)\s*(\d)\b/);
+  const num = normalizar(texto).match(/\b(?:el|la|del|de la|opcion|numero|n)\s*(\d)\b/);
   if (enPantalla && num && opciones[num[1] - 1]) return catalogoWeb.porSku(opciones[num[1] - 1].CodProd);
   // Varias opciones en pantalla y "este producto" sin número: no se adivina cuál
   if (session.step === STEPS.ELIGIENDO_OPCION && opciones.length > 1) return null;
@@ -925,6 +929,8 @@ function productoReferido(session, texto) {
   }
   const ultimo = (session.data.productosConfirmados || []).slice(-1)[0];
   if (ultimo) return catalogoWeb.porSku(ultimo.seleccionado?.CodProd);
+  // "¿y es apto para hornos?" justo después de preguntar por un producto
+  if (session.data.ultimoConsultadoSku) return catalogoWeb.porSku(session.data.ultimoConsultadoSku);
   return null;
 }
 
@@ -954,12 +960,101 @@ async function responderSobreProducto(phone, session, pregunta, ficha) {
     if (!reply) return false;
     if (reply.includes(RESPUESTA_FUERA_DE_TEMA)) reply = RESPUESTA_FUERA_DE_TEMA;
     else if (ficha.fichaTecnica) reply += `\n\n📄 Ficha técnica: ${ficha.fichaTecnica}`;
-    registrarConsulta(phone, pregunta, reply);
+    registrarConsulta(phone, pregunta, reply, session.data.lead);
+    session.data.ultimoConsultadoSku = ficha.sku;
     await sendMessage(phone, `${reply}\n\n${cierrePorPaso(session)}`);
     return true;
   } catch (err) {
     console.error("Error respondiendo sobre producto:", err.message);
     return false;
+  }
+}
+
+// Consultas de producto (dilución, descripción, ficha): antes de responder se piden
+// nombre, empresa y contacto, para que el ejecutivo pueda hacer seguimiento.
+// Clientes que ya dieron sus datos (en esta conversación o en una cotización anterior
+// por WhatsApp) reciben la respuesta directo.
+function tieneDatosDeContacto(phone, session) {
+  return !!(session.data.lead || session.data.razonSocial || datosPrevios(phone));
+}
+
+async function consultarProducto(phone, session, pregunta, ficha) {
+  if (!anthropicClient || !ficha) return false;
+  if (tieneDatosDeContacto(phone, session)) return responderSobreProducto(phone, session, pregunta, ficha);
+  session.data.consultaPendiente = { pregunta, sku: ficha.sku, pasoAnterior: session.step };
+  session.step = STEPS.LEAD_NOMBRE;
+  await sendMessage(phone,
+    `Con gusto te cuento lo que dice la ficha de *${ficha.nombre}* 📄\n\n` +
+    `Antes, para registrar tu consulta y que un ejecutivo pueda ayudarte después: ¿cuál es tu *nombre*?\n\n` +
+    `_🔒 Usamos tus datos solo para atender tu consulta. Escribe *datos* cuando quieras corregirlos o eliminarlos._`);
+  return true;
+}
+
+// Paso a paso de los datos de la consulta (LEAD_NOMBRE → LEAD_EMPRESA → LEAD_CONTACTO en web)
+async function manejarDatosConsulta(phone, session, text) {
+  const d = session.data;
+  const t = normalizar(text);
+  const pendiente = d.consultaPendiente;
+  const ficha = pendiente && catalogoWeb.porSku(pendiente.sku);
+  if (!pendiente || !ficha) { session.step = STEPS.WAITING_PRODUTOS; await sendMessage(phone, PREGUNTA_QUE_NECESITA); return; }
+
+  // No quiere dar datos: se le deja el link de la tienda, donde está la ficha pública
+  if (/\b(no (quiero|deseo|voy a)|prefiero no|para que|sin datos|no (te )?(doy|dare))\b/.test(t)) {
+    session.step = pendiente.pasoAnterior;
+    delete d.consultaPendiente;
+    await sendMessage(phone,
+      `Sin problema 🙂 Puedes ver la descripción y la ficha técnica en la tienda:\n${ficha.url}` +
+      (ficha.fichaTecnica ? `\n📄 ${ficha.fichaTecnica}` : "") + `\n\n${cierrePorPaso(session)}`);
+    return;
+  }
+
+  if (session.step === STEPS.LEAD_NOMBRE) {
+    if (text.trim().length < 2 || text.includes("?") || /\d{3}/.test(text)) {
+      await sendMessage(phone, `⚠️ Indícame tu *nombre* para registrar la consulta.`);
+      return;
+    }
+    d.leadNombre = text.trim().slice(0, 80);
+    session.step = STEPS.LEAD_EMPRESA;
+    await sendMessage(phone, `Gracias, *${d.leadNombre.split(" ")[0]}*. ¿De qué *empresa* nos escribes? _(o tu RUT; si es para uso personal, responde *particular*)_`);
+    return;
+  }
+
+  if (session.step === STEPS.LEAD_EMPRESA) {
+    if (text.trim().length < 2) { await sendMessage(phone, `⚠️ Indícame el nombre de tu *empresa*, tu RUT o *particular*.`); return; }
+    if (validarRUT(text)) {
+      const r = normalizarRUT(text);
+      Object.assign(d, { rut: r, rutLimpio: r, rutSinDV: r.slice(0, -1) });
+      d.leadEmpresa = formatearRut(r);
+    } else {
+      d.leadEmpresa = /^particular|^persona|^ninguna|^no tengo/.test(t) ? "Particular" : text.trim().slice(0, 100);
+    }
+    if (esCanalWeb(phone) && !d.contactoWeb && !d.emailCliente) {
+      session.step = STEPS.LEAD_CONTACTO;
+      await sendMessage(phone, `📧 ¿A qué *correo o teléfono* te podemos contactar?`);
+      return;
+    }
+  } else if (session.step === STEPS.LEAD_CONTACTO) {
+    const correo = text.match(/[^\s@]+@[^\s@]+\.[^\s@]+/);
+    const fono = text.replace(/\D/g, "");
+    if (!correo && fono.length < 8) {
+      await sendMessage(phone, `⚠️ Indícame un *correo* (ej: nombre@empresa.cl) o un *teléfono* (ej: +56 9 1234 5678).`);
+      return;
+    }
+    d.contactoWeb = correo ? correo[0] : `+${fono}`;
+    if (correo) d.emailCliente = correo[0];
+  }
+
+  // Datos completos → se registran y se responde la consulta que había quedado pendiente
+  d.lead = {
+    nombre: d.leadNombre, empresa: d.leadEmpresa,
+    contacto: esCanalWeb(phone) ? d.contactoWeb : phone.replace(/^whatsapp:/, ""),
+  };
+  // En la cotización se reutilizan: nombre o razón social (si dio empresa) y el contacto
+  if (!d.razonSocial) d.razonSocial = d.leadEmpresa && d.leadEmpresa !== "Particular" && !d.rut ? d.leadEmpresa : d.leadNombre;
+  session.step = pendiente.pasoAnterior;
+  delete d.consultaPendiente;
+  if (!await responderSobreProducto(phone, session, pendiente.pregunta, ficha)) {
+    await sendMessage(phone, `No pude leer la ficha en este momento; un ejecutivo te la enviará.\n\n${cierrePorPaso(session)}`);
   }
 }
 
@@ -1457,6 +1552,12 @@ async function handleMessage(phone, text) {
     session.data = {};
   }
 
+  // Pidiendo nombre/empresa/contacto antes de responder una consulta de producto
+  if ([STEPS.LEAD_NOMBRE, STEPS.LEAD_EMPRESA, STEPS.LEAD_CONTACTO].includes(session.step)) {
+    await manejarDatosConsulta(phone, session, text);
+    return;
+  }
+
   // Interceptar consultas/preguntas libres durante el flujo de cotización
   const stepsConversacionales = new Set([
     STEPS.WAITING_PRODUTOS, STEPS.CONFIRMANDO, STEPS.WAITING_FORMATO,
@@ -1477,7 +1578,7 @@ async function handleMessage(phone, text) {
   if (session.step !== STEPS.START && (PREGUNTA_INFO.test(normalizar(text)) ||
       (text.includes("?") && (mirandoProducto || catalogoWeb.nombradoEn(text))))) {
     const ficha = productoReferido(session, text);
-    if (ficha && await responderSobreProducto(phone, session, text, ficha)) return;
+    if (ficha && await consultarProducto(phone, session, text, ficha)) return;
     // "Descríbeme este producto" con varias opciones a la vista: se pregunta cuál y,
     // al recibir el número, se responde sobre esa opción (sin agregarla al pedido).
     const opcionesVista = session.data.opcionesActuales || [];
@@ -1577,7 +1678,7 @@ async function handleMessage(phone, text) {
       const fichaNombrada = PREGUNTA_INFO.test(tInicial) ? catalogoWeb.nombradoEn(text) : null;
       if (fichaNombrada) {
         await sendMessage(phone, saludoInicial);
-        if (await responderSobreProducto(phone, session, text, fichaNombrada)) break;
+        if (await consultarProducto(phone, session, text, fichaNombrada)) break;
       }
 
       const productosIniciales = session.data.textoProductos || (nombraProducto ? limpiarPedidoInicial(text) : null);
@@ -1755,6 +1856,11 @@ async function handleMessage(phone, text) {
       if (text.length < 3) { await sendMessage(phone, `⚠️ Describe los productos que necesitas.`); break; }
       // Botón "Cotizar este producto" / "Consultar por WhatsApp" de la tienda, o "¿tienen cloro gel?"
       session.data.textoProductos = extraerProductoDeLink(text) || limpiarPedidoInicial(text);
+      // "2 unidades" / "quiero 3" después de consultar por un producto → ese producto
+      if (session.data.ultimoConsultadoSku && /^\s*(quiero|necesito|dame|cotiza\w*|ok,?|ya,?|si,?)?\s*\d+\s*(un\w*|bidon\w*|caja\w*|litros?|lt|paquetes?|galon\w*)?\s*$/i.test(normalizar(text))) {
+        const consultado = catalogoWeb.porSku(session.data.ultimoConsultadoSku);
+        if (consultado) session.data.textoProductos = `${consultado.nombre.replace(/\s+X\s+\d+\s*UN\b.*$/i, "")} ${text.match(/\d+/)[0]} unidades`;
+      }
       await sendMessage(phone, `🔍 Buscando en nuestro catálogo...`);
       await procesarProductos(phone, session);
       break;
@@ -2698,7 +2804,7 @@ async function manejarEleccionOpcion(phone, session, text) {
       const pregunta = session.data.preguntaPendiente;
       delete session.data.preguntaPendiente;
       const ficha = catalogoWeb.porSku(lista[num - 1].CodProd);
-      if (ficha && await responderSobreProducto(phone, session, pregunta, ficha)) return;
+      if (ficha && await consultarProducto(phone, session, pregunta, ficha)) return;
       await sendMessage(phone, `No tengo la ficha de *${lista[num - 1].DesProd}* a mano; un ejecutivo te la puede enviar.\n\n${cierrePorPaso(session)}`);
       return;
     } else if (!isNaN(num) && num >= 1 && num <= lista.length) {
