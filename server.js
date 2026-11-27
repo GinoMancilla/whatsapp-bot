@@ -810,8 +810,8 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
 
     // Memoria: últimos mensajes del cliente para dar continuidad a preguntas de seguimiento
     const historial = (session.data.mensajesRecientes || [])
-      .slice(-6, -1) // excluye el mensaje actual (ya viene como `pregunta`)
-      .map(m => ({ role: "user", content: m.text }));
+      .slice(-3, -1) // solo los 2 anteriores (para "¿y ese viene en 5 lt?"); excluye el actual
+      .map(m => m.text).join(" / ");
 
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001", // conversación con el cliente — rápido y económico, consistente con el resto del bot
@@ -829,16 +829,19 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
         `Formato WhatsApp: negrita con UN asterisco (*así*), nunca dos (**). ` +
         `Responde en español, de forma breve (máx 2-3 oraciones). ` +
         `Si no tienes la información exacta, di "un ejecutivo puede ayudarte con eso". ` +
+        `Usos, modo de empleo y características: SOLO lo que dicen las descripciones de abajo; si no lo dicen, responde que el detalle está en la ficha técnica del producto en cintecsa.cl o que un ejecutivo puede ayudarte con eso. ` +
         `NUNCA inventes precios, disponibilidad, ni datos de productos. Los precios SOLO se entregan en la cotización final por correo — si preguntan un precio, di que lo verán en la cotización. ` +
-        `No hagas preguntas al cliente (el bot continúa solo con la cotización después de tu respuesta) y no pidas cantidades ni presentaciones. ` +
+        `No hagas preguntas al cliente y no pidas cantidades ni presentaciones. No describas los pasos siguientes ni el estado de la cotización ` +
+        `(nada de "continuamos con tu cotización" o "necesitamos confirmar…"): el bot agrega solo la siguiente pregunta después de tu respuesta. ` +
         (catalogo
           ? `Productos reales de nuestro catálogo relacionados con la consulta (menciona solo estos, sin precios): ${catalogo}. `
           : fichasWeb ? ""
           : `NO hay ningún producto en el catálogo que coincida con la consulta: NUNCA afirmes que CINTEC tiene o dispone del producto. ` +
             `Si preguntan por disponibilidad de un producto, responde que no lo ves en el catálogo y que, si lo agrega a su cotización, un ejecutivo revisará disponibilidad. `) +
         (fichasWeb ? `Descripciones de esos productos en la tienda cintecsa.cl (úsalas para explicar usos o recomendar): ${fichasWeb}. ` : "") +
-        (contextLine ? `Contexto de la cotización en curso: ${contextLine}.` : ""),
-      messages: [...historial, { role: "user", content: pregunta }],
+        (contextLine ? `Contexto de la cotización en curso: ${contextLine}. ` : "") +
+        (historial ? `Mensajes anteriores del cliente (SOLO para entender a qué se refiere "ese", "el otro", etc.; no los respondas ni los comentes): ${historial}` : ""),
+      messages: [{ role: "user", content: pregunta }],
     });
 
     const bruto = response.content[0]?.text || "";
@@ -867,6 +870,9 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
 // productos nuevos o con otro formato pasan por la misma búsqueda de catálogo,
 // y al final se muestra el resumen actualizado para que el cliente lo revise.
 const SENALES_CAMBIO = /\b(cambia\w*|en vez|en lugar|mejor|no el|no la|no los|no las|no era|no es (ese|esa)|me equivoque|equivoque|saca\w*|quita\w*|elimina\w*|borra\w*|no me pregunt\w*|corrig\w*|modific\w*|que sean|agrega\w*|anad\w*|suma\w*|tambien|ademas|el de \d|la de \d|despach\w*)\b/;
+
+// Preguntas informativas sobre un producto (se responden, no son pedidos ni cambios)
+const PREGUNTA_INFO = /\b(para que (sirve|se usa|es)|sirve (para|en)|como se (usa|aplica|diluye)|que (es|diferencia)|cual (me )?recomiendas?|me recomiendas|es (apto|seguro|toxico)|se puede usar|cuanto (dura|rinde)|rinde|ficha tecnica)\b/;
 
 const TOOL_CAMBIOS_PEDIDO = {
   name: "registrar_cambios_pedido",
@@ -1345,8 +1351,11 @@ async function handleMessage(phone, text) {
   ]);
   // Una corrección del pedido con forma de pregunta ("¿me cambias el lavaloza a 5 litros?")
   // en "¿algo más?" la atiende manejarMasProductos, no la IA de consultas.
+  // Ojo: "Suma" también es una marca (Suma Plaq) — una pregunta informativa sobre un
+  // producto no es una corrección aunque contenga una de las señales de cambio.
   const esCorreccionEnMas = session.step === STEPS.WAITING_MAS &&
-    (session.data.productosConfirmados || []).length > 0 && SENALES_CAMBIO.test(normalizar(text));
+    (session.data.productosConfirmados || []).length > 0 && SENALES_CAMBIO.test(normalizar(text)) &&
+    !PREGUNTA_INFO.test(normalizar(text));
   if (stepsConversacionales.has(session.step) && esUnaConsulta(text) && !esCorreccionEnMas) {
     const atendido = await responderConsulta(phone, session, text);
     if (atendido) return;
@@ -2518,6 +2527,8 @@ async function manejarMasProductos(phone, session, text) {
       `📦 ¿Qué más necesitas?\n_Indica producto y cantidad:_\n_"papel higienico 3 paquetes"_`
     );
   } else {
+    // Pregunta sobre un producto ("¿para qué sirve el suma plaq?") → se responde y se vuelve a preguntar
+    if (PREGUNTA_INFO.test(textNorm) && await responderConsulta(phone, session, text)) return;
     // ¿Es una corrección del pedido ("saca el cloro", "el lavaloza mejor de 5 litros")?
     if (SENALES_CAMBIO.test(textNorm) && await intentarCambioPedido(phone, session, text)) return;
     // El cliente escribió directamente un producto en vez de sí/no
