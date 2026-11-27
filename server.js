@@ -906,12 +906,20 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
 const SENALES_CAMBIO = /\b(cambia\w*|en vez|en lugar|mejor|no el|no la|no los|no las|no era|no es (ese|esa)|me equivoque|equivoque|saca\w*|quita\w*|elimina\w*|borra\w*|no me pregunt\w*|corrig\w*|modific\w*|que sean|agrega\w*|anad\w*|suma\w*|tambien|ademas|el de \d|la de \d|despach\w*)\b/;
 
 // Preguntas informativas sobre un producto (se responden, no son pedidos ni cambios)
-const PREGUNTA_INFO = /\b(para que (sirve|se usa|es)|sirve (para|en)|como se (usa|aplica|diluye|ocupa)|que (es|diferencia|contiene|trae)|cual (me )?recomiendas?|me recomiendas|es (apto|seguro|toxico)|se puede usar|cuanto (dura|rinde)|rinde|ficha( tecnica)?|describ\w*|contenido|contiene|composicion|ingrediente\w*|caracteristica\w*|modo de (uso|empleo)|dilu\w*|precaucion\w*|mas (info|informacion|detalle\w*)|detalle\w*|cuentame|dime mas)\b/;
+const PREGUNTA_INFO = /\b(para que (sirve|se usa|es)|sirve (para|en)|como se (usa|aplica|diluye|ocupa)|que (es|diferencia|contiene|trae)|diferencia\w*|compara\w*|(es )?mejor que|versus|vs|cual (me )?recomiendas?|me recomiendas|es (apto|seguro|toxico)|se puede usar|cuanto (dura|rinde)|rinde|ficha( tecnica)?|describ\w*|contenido|contiene|composicion|ingrediente\w*|caracteristica\w*|modo de (uso|empleo)|dilu\w*|precaucion\w*|mas (info|informacion|detalle\w*)|detalle\w*|cuentame|dime mas)\b/;
 
 // ¿De qué producto habla el cliente? 1) uno que nombre en el mensaje; 2) la opción
 // que se le está mostrando ("me puedes describir su contenido"); 3) "el 2" entre
 // varias opciones; 4) el último producto que agregó al pedido.
 function productoReferido(session, texto) {
+  // "¿Diferencia con el X?" mirando un producto: el principal es el de la pantalla
+  // (el otro se compara desde la lista de productos relacionados)
+  const opcionesPantalla = session.data.opcionesActuales || [];
+  if (/\b(diferencia\w*|compara\w*|mejor que|versus|vs)\b/.test(normalizar(texto)) &&
+      [STEPS.ELIGIENDO_OPCION, STEPS.CONFIRMANDO].includes(session.step) && opcionesPantalla.length === 1) {
+    const enPantalla = catalogoWeb.porSku(opcionesPantalla[0].CodProd);
+    if (enPantalla) return enPantalla;
+  }
   const nombrado = catalogoWeb.nombradoEn(texto);
   if (nombrado) return nombrado;
   const opciones = session.data.opcionesActuales || [];
@@ -942,9 +950,15 @@ async function responderSobreProducto(phone, session, pregunta, ficha) {
     const pdf = await catalogoWeb.fichaPdfBase64(ficha.fichaTecnica);
     const contenido = [];
     if (pdf) contenido.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf } });
+    // Comparaciones ("¿diferencia entre el virkon aquatic y el virkon S?"): otros productos
+    // de la tienda que podrían ser el que nombra, para comparar solo contra lo que existe.
+    const otros = catalogoWeb.candidatos(pregunta, 6).filter(p => p.sku !== ficha.sku).slice(0, 5);
     contenido.push({ type: "text", text:
       `Producto: ${ficha.nombre} (marca ${ficha.marca || "—"}).\nCategoría en la tienda (indica su uso): ${ficha.categoria || "—"}\n` +
-      `Descripción en la tienda: ${ficha.descripcion || "—"}\n\nPregunta del cliente: ${pregunta}` });
+      `Descripción en la tienda: ${ficha.descripcion || "—"}\n\n` +
+      `Otros productos del catálogo de CINTEC relacionados con la pregunta (lista completa de los que podrían coincidir):\n` +
+      (otros.length ? otros.map(p => `- ${p.nombre} (${p.categoria || "—"}): ${(p.descripcion || "").slice(0, 300)}`).join("\n") : "- (ninguno)") +
+      `\n\nPregunta del cliente: ${pregunta}` });
     const r = await anthropicClient.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 350,
@@ -953,7 +967,10 @@ async function responderSobreProducto(phone, session, pregunta, ficha) {
         "SOLO la ficha técnica adjunta y la descripción de la tienda. Si el dato no está ahí, dilo y ofrece que un ejecutivo lo confirme. " +
         "Nunca des precios ni stock. Español, breve (máx 5 líneas o viñetas cortas), formato WhatsApp: negrita con UN asterisco. " +
         "No hagas preguntas al cliente ni describas los pasos siguientes de la cotización. " +
-        `Si la pregunta no es sobre este producto ni sobre CINTEC, responde exactamente: "${RESPUESTA_FUERA_DE_TEMA}".`,
+        "Si el cliente compara con OTRO producto: si ese otro está en la lista de otros productos del catálogo, compáralos usando su descripción; " +
+        "si NO está en esa lista, dile claramente que ese producto no está en el catálogo de CINTEC (no lo describas ni lo compares con " +
+        "datos externos) y resume solo el nuestro. Una comparación con otro producto SIEMPRE es una pregunta válida, aunque ese producto no exista en CINTEC. " +
+        `Solo si la pregunta no tiene nada que ver con productos de limpieza, higiene o CINTEC, responde exactamente: "${RESPUESTA_FUERA_DE_TEMA}".`,
       messages: [{ role: "user", content: contenido }],
     });
     let reply = (r.content[0]?.text || "").replace(/\*\*(.+?)\*\*/g, "*$1*").replace(PREGUNTA_FINAL, "$1").trim();
