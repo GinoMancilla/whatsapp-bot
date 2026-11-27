@@ -821,7 +821,7 @@ const REGLA_NO_INVENTAR =
 const PERSONA_ASISTENTE =
   "Eres el *Asistente CINTEC*, asistente comercial de CINTEC, empresa chilena de productos de limpieza, higiene y " +
   "desinfección industrial. Trata al cliente siempre de USTED (nunca tutees), con un tono cercano y profesional, " +
-  "frases claras y sin emojis. Criterio comercial: recomienda los productos del catálogo que más se asemejen a lo que " +
+  "frases claras y con emojis moderados (uno o dos por mensaje, como los del bot). Criterio comercial: recomienda los productos del catálogo que más se asemejen a lo que " +
   "el cliente busca; si el cliente prioriza calidad o economía, oriéntalo según lo que dicen las descripciones " +
   "(concentración, rendimiento, formato o tamaño del envase), sin hablar de precios; y cuando en la información entregada " +
   "haya un producto complementario evidente (ej. un desengrasante y sus paños), sugiérelo en una sola frase. " +
@@ -1121,7 +1121,7 @@ async function manejarDatosConsulta(phone, session, text) {
     session.step = pendiente.pasoAnterior;
     delete d.consultaPendiente;
     await sendMessage(phone,
-      `Sin problema. Puede ver la descripción y la ficha técnica en la tienda:\n${ficha.url}` +
+      `Sin problema 🙂 Puede ver la descripción y la ficha técnica en la tienda:\n${ficha.url}` +
       (ficha.fichaTecnica ? `\n📄 ${ficha.fichaTecnica}` : "") + `\n\n${cierrePorPaso(session)}`);
     return;
   }
@@ -2879,7 +2879,7 @@ async function mostrarOpcionesProducto(phone, session, opciones, item, encabezad
   lista.forEach((p, i) => {
     const prov = abreviarProveedor(p.Proveedor);
     msg += `*${i + 1}.* ${p.DesProd}\n`;
-    msg += `   Marca: ${prov}\n\n`;
+    msg += `   🏭 ${prov}\n\n`;
   });
 
   const instruccion = lista.length > 1
@@ -4508,24 +4508,7 @@ async function notificarInterno(phone, data) {
 }
 
 // ─── Enviar mensaje WhatsApp ──────────────────────────────────────────────────
-// Estilo del Asistente CINTEC: cercano y profesional, sin emojis. Se quitan aquí, en la
-// salida, para que no se escape ninguno (textos fijos ni lo que redacte la IA).
-const EMOJI = /[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{1F1E6}-\u{1F1FF}️‍⃣]/gu;
-function sinEmojis(texto) {
-  if (typeof texto !== "string") return texto;
-  return texto
-    .replace(new RegExp(`^([ \\t]*)(?:${EMOJI.source}|[ \\t])*${EMOJI.source}[ \\t]*`, "gmu"), "$1") // "👋 ¡Hola" → "¡Hola" (respeta sangría)
-    .replace(EMOJI, "")
-    .replace(/(\S)[ \t]+([,.;:!?])/g, "$1$2")   // "Entendido , esas" → "Entendido, esas"
-    .replace(/(^|\s)([_*])[ \t]+(?=\S)/gm, "$1$2") // "_ Usamos" → "_Usamos" (cursiva de WhatsApp)
-    .replace(/(\S)[ \t]{2,}(?=\S)/g, "$1 ")
-    .replace(/[ \t]+$/gm, "")
-    .replace(/\(\s*\)/g, "")
-    .trim();
-}
-
 async function sendMessage(to, body) {
-  body = sinEmojis(body);
   // Canal web: no va a Meta, queda en la bandeja de salida que lee la burbuja
   if (esCanalWeb(to)) { encolarWeb(to, { tipo: "texto", texto: body }); return; }
   try {
@@ -5546,7 +5529,6 @@ function esCanalWeb(phone) { return typeof phone === "string" && phone.startsWit
 
 function encolarWeb(id, item) {
   const box = webOutbox.get(id) || { items: [], ts: 0 };
-  if (typeof item.texto === "string") item.texto = sinEmojis(item.texto);
   box.items.push(item);
   if (box.items.length > 50) box.items.splice(0, box.items.length - 50);
   box.ts = Date.now();
