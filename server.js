@@ -2427,7 +2427,6 @@ async function buscarParaClienteNuevo(phone, session, item) {
   if (esPedidoPorNecesidad(textoNecesidad)) {
     const porNecesidad = await buscarPorNecesidad(session, textoNecesidad);
     if (porNecesidad.length > 0) {
-      await sendMessage(phone, `🔎 Según lo que necesitas, estos productos de nuestra tienda te pueden servir:`);
       await mostrarOpcionesProducto(phone, session, porNecesidad, item);
       return;
     }
@@ -2472,9 +2471,8 @@ async function buscarParaClienteNuevo(phone, session, item) {
     // Sin coincidencia por nombre: buscar por descripción en la tienda web
     const porDescripcion = await buscarPorNecesidad(session, textoNecesidad);
     if (porDescripcion.length > 0) {
-      await sendMessage(phone,
-        `ℹ️ No encontré _"${item.nombre}"_ con ese nombre exacto, pero por su descripción estos productos te pueden servir:`
-      );
+      // Se encontró en la tienda: decirlo en positivo (la búsqueda previa en la lista de
+      // precios es un detalle interno que el cliente no necesita saber)
       await mostrarOpcionesProducto(phone, session, porDescripcion, item);
       return;
     }
@@ -2490,11 +2488,8 @@ async function buscarParaClienteNuevo(phone, session, item) {
     }
 
     if (ampliados.length > 0) {
-      await sendMessage(phone,
-        `ℹ️ No encontré _"${item.nombre}"_ exactamente en nuestro catálogo.\n` +
-        `Estas son las opciones más cercanas que tenemos:`
-      );
-      await mostrarOpcionesProducto(phone, session, ampliados, item);
+      await mostrarOpcionesProducto(phone, session, ampliados, item,
+        `ℹ️ No tengo exactamente _"${item.nombre}"_; estas son las opciones más parecidas:`);
       return;
     }
 
@@ -2511,11 +2506,8 @@ async function buscarParaClienteNuevo(phone, session, item) {
         if (porIA.length >= 4) break;
       }
       if (porIA.length > 0) {
-        await sendMessage(phone,
-          `ℹ️ No encontré _"${item.nombre}"_ con ese nombre exacto.\n` +
-          `Pero estas opciones de nuestro catálogo podrían servirte:`
-        );
-        await mostrarOpcionesProducto(phone, session, porIA.slice(0, 4), item);
+        await mostrarOpcionesProducto(phone, session, porIA.slice(0, 4), item,
+          `ℹ️ No tengo exactamente _"${item.nombre}"_; estas opciones podrían servirte:`);
         return;
       }
     }
@@ -2622,7 +2614,7 @@ async function manejarFormato(phone, session, text) {
 }
 
 // ─── Mostrar opciones de producto ─────────────────────────────────────────────
-async function mostrarOpcionesProducto(phone, session, opciones, item) {
+async function mostrarOpcionesProducto(phone, session, opciones, item, encabezado = null) {
   // Deduplicar por CodProd y tomar máx 4
   const unicosPorCod = {};
   opciones.forEach(p => { if (!unicosPorCod[p.CodProd]) unicosPorCod[p.CodProd] = p; });
@@ -2631,7 +2623,8 @@ async function mostrarOpcionesProducto(phone, session, opciones, item) {
   session.data.opcionesActuales = lista;
   session.step = STEPS.ELIGIENDO_OPCION;
 
-  let msg = `📋 *Opciones disponibles para "${item.nombre}":*\n\n`;
+  const titulo = encabezado || `🔎 Encontré ${lista.length > 1 ? "estas opciones" : "esta opción"} para _"${item.nombre}"_:`;
+  let msg = `${titulo}\n\n`;
   lista.forEach((p, i) => {
     const prov = abreviarProveedor(p.Proveedor);
     msg += `*${i + 1}.* ${p.DesProd}\n`;
@@ -2644,7 +2637,7 @@ async function mostrarOpcionesProducto(phone, session, opciones, item) {
 
   if (esCanalWeb(phone)) {
     // Chat web: tarjetas con foto y link a la ficha de la tienda (datos de cintecsa.cl)
-    await sendMessage(phone, `📋 *Opciones para "${item.nombre}":*`);
+    await sendMessage(phone, titulo);
     encolarWeb(phone, {
       tipo: "productos",
       items: lista.map((p, i) => {
