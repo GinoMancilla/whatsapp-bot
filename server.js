@@ -766,6 +766,9 @@ async function buscarContextoCatalogo(session, pregunta) {
 
 const CIERRE_POR_DEFECTO = "_Continuemos con tu cotización..._";
 const RESPUESTA_FUERA_DE_TEMA = "Solo puedo ayudarte con productos y cotizaciones de CINTEC 🙂";
+// Pregunta con la que a veces cierra la IA ("¿Necesitas más detalles? 😊"): se quita,
+// porque la siguiente pregunta la pone el bot. Solo si hay texto antes.
+const PREGUNTA_FINAL = /([.!)*\p{Extended_Pictographic}])\s*¿[^?]*\?[\s\p{Extended_Pictographic}️]*$/u;
 
 // Tras responder una consulta libre, se vuelve a formular la pregunta que el bot
 // dejó pendiente (en vez de un genérico "continuemos"), para que el cliente sepa qué responder.
@@ -853,7 +856,7 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
       ? RESPUESTA_FUERA_DE_TEMA
       : bruto.replace(/^\s*TEMA:\s*\w+\s*/i, "").replace(/\*\*(.+?)\*\*/g, "*$1*").trim()
           // si igual cerró con una pregunta ("¿Cuál te interesa?"), se quita: la siguiente pregunta la pone el bot
-          .replace(/(?<=[.!)*])\s*¿[^?]*\?\s*$/, "").trim();
+          .replace(PREGUNTA_FINAL, "$1").trim();
     registrarConsulta(phone, pregunta, reply); // auditoría: pregunta del cliente + respuesta de la IA
     if (fueraDeTema || /ejecutivo puede ayudarte/i.test(reply)) {
       registrarConversacionProblematica(phone, session, "sin_respuesta", { pregunta, respuestaClaude: reply });
@@ -929,7 +932,7 @@ async function responderSobreProducto(phone, session, pregunta, ficha) {
         `Si la pregunta no es sobre este producto ni sobre CINTEC, responde exactamente: "${RESPUESTA_FUERA_DE_TEMA}".`,
       messages: [{ role: "user", content: contenido }],
     });
-    let reply = (r.content[0]?.text || "").replace(/\*\*(.+?)\*\*/g, "*$1*").replace(/(?<=[.!)*])\s*¿[^?]*\?\s*$/, "").trim();
+    let reply = (r.content[0]?.text || "").replace(/\*\*(.+?)\*\*/g, "*$1*").replace(PREGUNTA_FINAL, "$1").trim();
     if (!reply) return false;
     if (reply.includes(RESPUESTA_FUERA_DE_TEMA)) reply = RESPUESTA_FUERA_DE_TEMA;
     else if (ficha.fichaTecnica) reply += `\n\n📄 Ficha técnica: ${ficha.fichaTecnica}`;
