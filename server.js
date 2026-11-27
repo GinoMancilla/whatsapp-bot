@@ -906,6 +906,11 @@ function productoReferido(session, texto) {
   const num = normalizar(texto).match(/\b(?:el|la|opcion|numero|n)\s*(\d)\b/);
   if (enPantalla && num && opciones[num[1] - 1]) return catalogoWeb.porSku(opciones[num[1] - 1].CodProd);
   if (enPantalla && session.data.resultadoActual?.principal) return catalogoWeb.porSku(session.data.resultadoActual.principal.CodProd);
+  // El último que eligió (con o sin precio automático): "¿cuántas unidades?" → "descríbeme el producto"
+  if (session.data.ultimoElegidoCod) {
+    const elegido = catalogoWeb.porSku(session.data.ultimoElegidoCod);
+    if (elegido) return elegido;
+  }
   const ultimo = (session.data.productosConfirmados || []).slice(-1)[0];
   if (ultimo) return catalogoWeb.porSku(ultimo.seleccionado?.CodProd);
   return null;
@@ -2242,6 +2247,7 @@ async function buscarPorNecesidad(session, texto) {
 
 // Agrega a la cotización la opción elegida; las "sinPrecio" van a revisión del ejecutivo
 function agregarOpcionElegida(session, p, item) {
+  session.data.ultimoElegidoCod = p.CodProd; // para "descríbeme el producto" justo después
   if (p.sinPrecio) {
     const cant = item.cantidadEspecificada ? ` — ${item.cantidad} ${item.unidad}` : "";
     session.data.productosNoEncontrados.push(`${p.DesProd} (SKU ${p.CodProd})${cant} — precio a confirmar`);
