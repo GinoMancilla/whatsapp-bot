@@ -915,6 +915,8 @@ function productoReferido(session, texto) {
   if (enPantalla && opciones.length === 1) return catalogoWeb.porSku(opciones[0].CodProd);
   const num = normalizar(texto).match(/\b(?:el|la|opcion|numero|n)\s*(\d)\b/);
   if (enPantalla && num && opciones[num[1] - 1]) return catalogoWeb.porSku(opciones[num[1] - 1].CodProd);
+  // Varias opciones en pantalla y "este producto" sin número: no se adivina cuál
+  if (session.step === STEPS.ELIGIENDO_OPCION && opciones.length > 1) return null;
   if (enPantalla && session.data.resultadoActual?.principal) return catalogoWeb.porSku(session.data.resultadoActual.principal.CodProd);
   // El último que eligió (con o sin precio automático): "¿cuántas unidades?" → "descríbeme el producto"
   if (session.data.ultimoElegidoCod) {
@@ -1476,6 +1478,16 @@ async function handleMessage(phone, text) {
       (text.includes("?") && (mirandoProducto || catalogoWeb.nombradoEn(text))))) {
     const ficha = productoReferido(session, text);
     if (ficha && await responderSobreProducto(phone, session, text, ficha)) return;
+    // "Descríbeme este producto" con varias opciones a la vista: se pregunta cuál y,
+    // al recibir el número, se responde sobre esa opción (sin agregarla al pedido).
+    const opcionesVista = session.data.opcionesActuales || [];
+    if (!ficha && session.step === STEPS.ELIGIENDO_OPCION && opcionesVista.length > 1 &&
+        !NO_ME_SIRVE.test(normalizar(text))) {
+      session.data.preguntaPendiente = text;
+      await sendMessage(phone,
+        `¿Sobre cuál de las opciones es tu consulta? Responde el *número* (1 al ${opcionesVista.length}) y te cuento lo que dice su ficha 📄`);
+      return;
+    }
   }
 
   // Si le preguntamos qué productos necesita y describe un uso ("algo para sacar grasa
@@ -2629,6 +2641,7 @@ async function mostrarOpcionesProducto(phone, session, opciones, item, encabezad
   const lista = Object.values(unicosPorCod).slice(0, 4);
 
   session.data.opcionesActuales = lista;
+  delete session.data.preguntaPendiente;
   session.step = STEPS.ELIGIENDO_OPCION;
 
   const titulo = encabezado || `🔎 Encontré ${lista.length > 1 ? "estas opciones" : "esta opción"} para _"${item.nombre}"_:`;
@@ -2680,6 +2693,14 @@ async function manejarEleccionOpcion(phone, session, text) {
     if (lista.length === 1 && /^(si|sí|s|yes|ok)$/i.test(textNorm)) {
       const conPrecio = agregarOpcionElegida(session, lista[0], item);
       await sendMessage(phone, conPrecio ? `✅ Producto confirmado.` : `✅ Producto anotado.\n${AVISO_SIN_PRECIO}`);
+    } else if (!isNaN(num) && num >= 1 && num <= lista.length && session.data.preguntaPendiente) {
+      // Respondió "¿sobre cuál?": se contesta la consulta sobre esa opción, sin elegirla aún
+      const pregunta = session.data.preguntaPendiente;
+      delete session.data.preguntaPendiente;
+      const ficha = catalogoWeb.porSku(lista[num - 1].CodProd);
+      if (ficha && await responderSobreProducto(phone, session, pregunta, ficha)) return;
+      await sendMessage(phone, `No tengo la ficha de *${lista[num - 1].DesProd}* a mano; un ejecutivo te la puede enviar.\n\n${cierrePorPaso(session)}`);
+      return;
     } else if (!isNaN(num) && num >= 1 && num <= lista.length) {
       const p = lista[num - 1];
       const conPrecio = agregarOpcionElegida(session, p, item);
