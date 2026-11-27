@@ -84,7 +84,7 @@
     ".cards{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scroll-snap-type:x mandatory;flex:none}",
     ".card{flex:0 0 150px;scroll-snap-align:start;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:8px;display:flex;flex-direction:column;gap:4px}",
     ".card img,.noimg{width:100%;height:110px;object-fit:contain;border-radius:8px;background:#fff}",
-    ".noimg{display:grid;place-items:center;font-size:34px;background:#f4f2f0}",
+    ".noimg{display:grid;place-items:center;font-size:12px;color:#6b6560;background:#f4f2f0}",
     ".cname{font-size:12px;line-height:1.3;color:#1b1f24;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;min-height:47px}",
     ".cbrand{font-size:11px;color:#6b6560}",
     ".cact{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:auto}",
@@ -119,18 +119,18 @@
   var root = host.attachShadow({ mode: "open" });
   root.innerHTML =
     "<style>" + css + "</style>" +
-    '<div class="teaser" hidden>👋 ¿Necesitas una <b>cotización</b>? Te la armo en minutos.</div>' +
+    '<div class="teaser" hidden>¿Necesita una <b>cotización</b>? Se la preparo en minutos.</div>' +
     '<button class="fab" aria-label="Abrir chat de cotizaciones">' + ICON_CHAT + '<span class="badge"></span></button>' +
     '<section class="panel" role="dialog" aria-label="Chat de cotizaciones ' + esc(TITULO) + '" hidden>' +
       '<header class="head"><div class="avatar">' + esc(TITULO.slice(0, 1)) + '</div>' +
-        '<div class="who"><strong>' + esc(TITULO) + '</strong><span>Asistente de cotizaciones</span></div>' +
+        '<div class="who"><strong>' + esc(TITULO) + '</strong><span>Asistente CINTEC</span></div>' +
         '<button class="btn reset" title="Empezar de nuevo" aria-label="Empezar de nuevo">' + ICON_RESET + '</button>' +
         '<button class="btn close" title="Cerrar" aria-label="Cerrar chat">' + ICON_X + '</button></header>' +
       '<div class="log" aria-live="polite"></div>' +
       '<div class="chips"></div>' +
-      '<form class="foot"><textarea rows="1" placeholder="Escribe tu mensaje…" aria-label="Mensaje" maxlength="1000"></textarea>' +
+      '<form class="foot"><textarea rows="1" placeholder="Escriba su mensaje…" aria-label="Mensaje" maxlength="1000"></textarea>' +
         '<button class="send" type="submit" aria-label="Enviar">' + ICON_SEND + '</button></form>' +
-      '<div class="legal">Al chatear aceptas la <a href="' + API + '/privacidad" target="_blank" rel="noopener">política de privacidad</a>.</div>' +
+      '<div class="legal">Al chatear acepta la <a href="' + API + '/privacidad" target="_blank" rel="noopener">política de privacidad</a>.</div>' +
     '</section>';
   host.style.setProperty("--c", COLOR);
   root.host.style.setProperty("--c", COLOR);
@@ -165,7 +165,7 @@
       a.className = "file";
       a.href = /^https?:/.test(m.url) ? m.url : API + m.url;
       a.target = "_blank"; a.rel = "noopener";
-      a.textContent = "📄 Descargar " + (m.nombre || "archivo");
+      a.textContent = "Descargar " + (m.nombre || "archivo");
       el.appendChild(a);
     } else if (m.tipo === "productos") {
       // Tarjetas con foto (datos públicos de la ficha en cintecsa.cl)
@@ -174,7 +174,7 @@
       (m.items || []).forEach(function (p) {
         var c = document.createElement("div");
         c.className = "card";
-        var img = p.imagen ? '<img src="' + esc(p.imagen) + '" alt="">' : '<div class="noimg">📦</div>';
+        var img = p.imagen ? '<img src="' + esc(p.imagen) + '" alt="">' : '<div class="noimg">Sin foto</div>';
         c.innerHTML = img +
           '<div class="cname">' + (p.numero ? "<b>" + p.numero + ".</b> " : "") + esc(p.nombre) + "</div>" +
           (p.marca ? '<div class="cbrand">' + esc(p.marca) + "</div>" : "") +
@@ -184,7 +184,7 @@
           enviar(p.valor, (p.accion === "Cotizar" ? "Quiero cotizar: " : "Elijo: ") + p.nombre);
         });
         var im = c.querySelector("img");
-        if (im) im.addEventListener("error", function () { im.outerHTML = '<div class="noimg">📦</div>'; });
+        if (im) im.addEventListener("error", function () { im.outerHTML = '<div class="noimg">Sin foto</div>'; });
         el.appendChild(c);
       });
     } else {
@@ -211,14 +211,14 @@
         var m = linea.match(/^\s*\*(\d{1,2})\.\*\s+(.+)$/);
         if (m) opciones.push({ valor: m[1], etiqueta: m[1] + ". " + m[2].replace(/[*_~]/g, "") });
       });
-      if (/escribe \*todos\*/i.test(ultimo.texto || "")) opciones.push({ valor: "todos", etiqueta: "Todos" });
+      if (/escrib[ae] \*todos\*/i.test(ultimo.texto || "")) opciones.push({ valor: "todos", etiqueta: "Todos" });
       if (!opciones.length && /\*s[ií]\*/i.test(ultimo.texto || "") && /\*no\*/i.test(ultimo.texto || "")) {
         opciones.push({ valor: "sí", etiqueta: "Sí" }, { valor: "no", etiqueta: "No" });
       }
     }
     var prod = productoActual();
     if (prod && !estado.productoOfrecido) {
-      opciones.unshift({ valor: "__prod", etiqueta: "📦 Cotizar este producto", prod: true });
+      opciones.unshift({ valor: "__prod", etiqueta: "Cotizar este producto", prod: true });
     }
     opciones.slice(0, 8).forEach(function (o) {
       var b = document.createElement("button");
@@ -290,7 +290,7 @@
       agregar(j.mensajes || []);
     }).catch(function (e) {
       escribiendo(false);
-      agregar([{ texto: "⚠️ " + (e.message && e.message.length < 120 ? e.message : "No pude conectarme. Revisa tu conexión e intenta de nuevo.") }]);
+      agregar([{ texto: (e.message && e.message.length < 120 ? e.message : "No pude conectarme. Revise su conexión e intente de nuevo.") }]);
     }).then(function () {
       enviando = false; send.disabled = false;
       if (!panel.hidden) input.focus();

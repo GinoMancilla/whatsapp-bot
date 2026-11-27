@@ -156,7 +156,10 @@ async function recomendar(anthropicClient, necesidad, maxResultados = 4) {
       system:
         "Eres el buscador de productos de CINTEC (higiene y limpieza). Recibes la necesidad de un cliente y una lista " +
         "numerada de productos REALES de la tienda con su descripción. Elige solo los que realmente sirven para esa necesidad, " +
-        `del más al menos adecuado, máximo ${maxResultados}. Responde SOLO los números separados por coma (ej: 3,1). ` +
+        `del que más se asemeja a lo que busca al menos parecido, máximo ${maxResultados}. ` +
+        "Si el cliente prioriza economía (económico, barato, rendidor) pon primero los concentrados, de mayor rendimiento o envase grande; " +
+        "si prioriza calidad (mejor, profesional, premium) pon primero los de uso profesional o mayor desempeño según la descripción. " +
+        "Responde SOLO los números separados por coma (ej: 3,1). " +
         "Si ninguno sirve, responde: ninguno. Nunca agregues texto.",
       messages: [{
         role: "user",

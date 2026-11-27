@@ -440,8 +440,8 @@ setInterval(async () => {
         const s = sessions[phone];
         if (s?.step === STEPS.HIDRO_ESPERANDO) {
           await sendMessage(phone,
-            `⏳ Seguimos trabajando en tu cotización de hidrolavadora. Un especialista te responderá a la brevedad.\n` +
-            `Si tienes alguna consulta urgente, escribe *ejecutivo* y te atendemos directamente.`
+            `⏳ Seguimos trabajando en su cotización de hidrolavadora. Un especialista le responderá a la brevedad.\n` +
+            `Si tiene alguna consulta urgente, escriba *ejecutivo* y le atendemos directamente.`
           );
         }
         entry.reminderCount = 2;
@@ -552,8 +552,8 @@ async function registrarError(phone, session) {
     registrarConversacionProblematica(phone, session, "loop");
     await notificarHandoff(phone, session.data);
     await sendMessage(phone,
-      `💁 Veo que estás teniendo dificultades. Ya notifiqué a un *ejecutivo de ventas* que te contactará pronto.\n\n` +
-      `Puedes seguir cotizando o escribir *stop* para cerrar.`
+      `💁 Veo que está teniendo dificultades. Ya notifiqué a un *ejecutivo de ventas* que le contactará pronto.\n\n` +
+      `Puede seguir cotizando o escribir *stop* para cerrar.`
     );
   }
 }
@@ -769,8 +769,8 @@ async function buscarContextoCatalogo(session, pregunta) {
   } catch { return ""; }
 }
 
-const CIERRE_POR_DEFECTO = "_Continuemos con tu cotización..._";
-const RESPUESTA_FUERA_DE_TEMA = "Solo puedo ayudarte con productos y cotizaciones de CINTEC 🙂";
+const CIERRE_POR_DEFECTO = "_Continuemos con su cotización..._";
+const RESPUESTA_FUERA_DE_TEMA = "Solo puedo ayudarle con productos y cotizaciones de CINTEC 🙂";
 // Pregunta con la que a veces cierra la IA ("¿Necesitas más detalles? 😊"): se quita,
 // porque la siguiente pregunta la pone el bot. Solo si hay texto antes.
 const PREGUNTA_FINAL = /(\S)\s*¿[^?¿]*\?[\s\p{Extended_Pictographic}️]*$/u;
@@ -780,28 +780,28 @@ const PREGUNTA_FINAL = /(\S)\s*¿[^?¿]*\?[\s\p{Extended_Pictographic}️]*$/u;
 function cierrePorPaso(session) {
   switch (session.step) {
     case STEPS.WAITING_MAS:
-      return `¿Necesitas cotizar algo más? Responde *sí* para agregar productos o *no* para continuar.`;
+      return `¿Necesita cotizar algo más? Responda *sí* para agregar productos o *no* para continuar.`;
     case STEPS.WAITING_CANTIDAD:
-      return `📦 ¿Cuántas unidades necesitas de este producto?`;
+      return `📦 ¿Cuántas unidades necesita de este producto?`;
     case STEPS.CONFIRMANDO:
-      return `¿Es este el producto correcto? Responde *sí* o *no*.`;
+      return `¿Es este el producto correcto? Responda *sí* o *no*.`;
     case STEPS.ELIGIENDO_OPCION:
-      if ((session.data.opcionesActuales || []).length === 1) return `¿Lo agregamos a tu cotización? Responde *sí* o *no*.`;
-      return `Responde con el *número* de la opción que necesitas.`;
+      if ((session.data.opcionesActuales || []).length === 1) return `¿Lo agregamos a su cotización? Responda *sí* o *no*.`;
+      return `Responda con el *número* de la opción que necesita.`;
     case STEPS.WAITING_FORMATO:
-      return `Responde con el *número* de la opción que necesitas.`;
+      return `Responda con el *número* de la opción que necesita.`;
     case STEPS.WAITING_PRODUTOS:
-      return `📦 ¿Qué productos necesitas cotizar?`;
+      return `📦 ¿Qué productos necesita cotizar?`;
     case STEPS.WAITING_ENTREGA:
       return `📦 ¿Cuál es la *dirección de entrega*? (calle, número, comuna y ciudad)`;
     case STEPS.WAITING_RUT:
-      return `Para enviarte la cotización, ingresa tu *RUT* (o responde *sin rut*).`;
+      return `Para enviarle la cotización, ingrese su *RUT* (o responda *sin rut*).`;
     case STEPS.WAITING_RAZON:
-      return `¿Cuál es tu *nombre o razón social*?`;
+      return `¿Cuál es su *nombre o razón social*?`;
     case STEPS.WAITING_EMAIL:
       return `📧 ¿A qué *correo electrónico* enviamos la cotización?`;
     case STEPS.DATOS_PREVIOS:
-      return `¿Usamos tus datos de la última vez? Responde *sí* o *no*.`;
+      return `¿Usamos sus datos de la última vez? Responda *sí* o *no*.`;
     default:
       return CIERRE_POR_DEFECTO;
   }
@@ -816,6 +816,17 @@ const REGLA_NO_INVENTAR =
   "y termina con una línea que diga exactamente SIN_DATO. Si no tienes nada de lo que pregunta, responde solo SIN_DATO. " +
   "Cuando uses SIN_DATO no escribas que no tienes la información ni recomiendes contactar a un ejecutivo: ese aviso lo agrega el bot. ";
 
+// Identidad y estilo del asistente (definido por Gino, 27-11-2026). Va al inicio de los
+// prompts que redactan texto para el cliente.
+const PERSONA_ASISTENTE =
+  "Eres el *Asistente CINTEC*, asistente comercial de CINTEC, empresa chilena de productos de limpieza, higiene y " +
+  "desinfección industrial. Trata al cliente siempre de USTED (nunca tutees), con un tono cercano y profesional, " +
+  "frases claras y sin emojis. Criterio comercial: recomienda los productos del catálogo que más se asemejen a lo que " +
+  "el cliente busca; si el cliente prioriza calidad o economía, oriéntalo según lo que dicen las descripciones " +
+  "(concentración, rendimiento, formato o tamaño del envase), sin hablar de precios; y cuando en la información entregada " +
+  "haya un producto complementario evidente (ej. un desengrasante y sus paños), sugiérelo en una sola frase. " +
+  "Todo lo que recomiendes o afirmes debe venir del catálogo y la información que se te entrega. ";
+
 const MAX_DERIVACIONES_SESION = 3;
 // Deriva al ejecutivo una consulta que el bot no pudo responder; devuelve el texto para el cliente.
 async function derivarConsultaSinDato(phone, session, pregunta) {
@@ -823,7 +834,7 @@ async function derivarConsultaSinDato(phone, session, pregunta) {
   const contactoWeb = d.contactoWeb || d.emailCliente || "";
   registrarConversacionProblematica(phone, session, "sin_respuesta", { pregunta });
   if (esCanalWeb(phone) && !contactoWeb) {
-    return `👤 Ese dato debe confirmarlo un *ejecutivo de CINTEC*. Si quieres que te contacte, escribe *ejecutivo*.`;
+    return `👤 Ese dato debe confirmarlo un *ejecutivo de CINTEC*. Si quiere que le contacte, escriba *ejecutivo*.`;
   }
   d.derivacionesSinDato = (d.derivacionesSinDato || 0) + 1;
   if (d.derivacionesSinDato <= MAX_DERIVACIONES_SESION) {
@@ -832,7 +843,7 @@ async function derivarConsultaSinDato(phone, session, pregunta) {
       (d.lead?.empresa ? ` — Empresa: ${d.lead.empresa}` : "") + (contactoWeb ? ` — Contacto: ${contactoWeb}` : "");
     notificarContactoEjecutivo(phone, nombre, motivo, session).catch(() => {});
   }
-  return `📨 No tengo ese dato confirmado, así que *derivé tu consulta a un ejecutivo de CINTEC*, que te responderá a la brevedad.`;
+  return `📨 No tengo ese dato confirmado, así que *derivé su consulta a un ejecutivo de CINTEC*, que le responderá a la brevedad.`;
 }
 
 // Quita la marca SIN_DATO de la respuesta de la IA; si estaba, agrega la derivación.
@@ -871,7 +882,7 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
       model: "claude-haiku-4-5-20251001", // conversación con el cliente — rápido y económico, consistente con el resto del bot
       max_tokens: 250,
       system:
-        `Eres el asistente de ventas de CINTEC, empresa chilena de productos de limpieza, higiene y desinfección industrial. ` +
+        PERSONA_ASISTENTE +
         `TU ÚNICO TEMA es CINTEC: sus productos, para qué sirven y cuál conviene, cotizaciones, despacho, pagos y contacto con un ejecutivo. ` +
         `Cuenta como CINTEC toda consulta sobre limpieza, higiene, desinfección, papeles, dispensadores o insumos de aseo para cualquier lugar ` +
         `(hogar, oficina, baño, cocina, industria), aunque no haya productos en las listas: en ese caso responde SIN_DATO. ` +
@@ -1002,7 +1013,7 @@ async function responderSobreProducto(phone, session, pregunta, ficha) {
       model: "claude-haiku-4-5-20251001",
       max_tokens: 350,
       system:
-        "Eres el asistente de ventas de CINTEC (higiene y limpieza, Chile). Responde la pregunta del cliente sobre ESTE producto usando " +
+        PERSONA_ASISTENTE + "Responde la pregunta del cliente sobre ESTE producto usando " +
         "SOLO la ficha técnica adjunta y la descripción de la tienda. " + REGLA_NO_INVENTAR +
         "Nunca des precios ni stock. Español, breve (máx 5 líneas o viñetas cortas), formato WhatsApp: negrita con UN asterisco. " +
         "No hagas preguntas al cliente ni describas los pasos siguientes de la cotización. " +
@@ -1035,6 +1046,48 @@ async function responderSobreProducto(phone, session, pregunta, ficha) {
   }
 }
 
+// "¿Cuál me conviene?", "¿cuál es más económico?", "¿cuál recomienda?" frente a varias opciones
+const PIDE_RECOMENDACION = /\b(cual(es)?\b.*\b(conviene|recomienda\w*|mejor|economic\w*|rinde|rendidor\w*|dura|calidad|barat\w*)|recomienda\w*|que me conviene|mas (economic\w*|barat\w*|rendidor\w*))\b/;
+
+// Recomienda entre las opciones en pantalla según lo que busca el cliente (calidad,
+// economía, uso), usando solo las descripciones de la tienda. Sin precios.
+async function recomendarEntreOpciones(phone, session, pregunta) {
+  if (!anthropicClient) return false;
+  const opciones = (session.data.opcionesActuales || []).map((o, i) => {
+    const f = catalogoWeb.porSku(o.CodProd);
+    return `${i + 1}. ${o.DesProd}` + (f ? ` [categoría: ${f.categoria || "—"}] — ${(f.descripcion || "").slice(0, 400)}` : "");
+  });
+  if (opciones.length < 2) return false;
+  try {
+    const r = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 300,
+      system:
+        PERSONA_ASISTENTE + REGLA_NO_INVENTAR +
+        "El cliente está viendo estas opciones numeradas y pide una recomendación. Indica cuál (por su número) se ajusta mejor " +
+        "a lo que busca y por qué, en máximo 4 líneas, usando solo lo que dicen las descripciones (nunca precios). " +
+        "Economía significa menor costo por uso: prefiere el producto concentrado (mayor dilución) y el envase más grande; " +
+        "nunca presentes el envase más chico como el más económico. Calidad significa mejor desempeño o uso profesional según la descripción. " +
+        "Formato WhatsApp: negrita con UN asterisco. No hagas preguntas.",
+      messages: [{ role: "user", content: `Opciones:\n${opciones.join("\n")}\n\nPregunta del cliente: ${pregunta}` }],
+    });
+    const bruto = r.content[0]?.text || "";
+    const sinDato = /\bSIN_DATO\b/.test(bruto);
+    let reply = bruto.replace(MARCA_SIN_DATO, "").replace(/\*\*(.+?)\*\*/g, "*$1*").trim().replace(PREGUNTA_FINAL, "$1").trim();
+    if (sinDato) {
+      const derivacion = await derivarConsultaSinDato(phone, session, pregunta);
+      reply = reply ? `${reply}\n\n${derivacion}` : derivacion;
+    }
+    if (!reply) return false;
+    registrarConsulta(phone, pregunta, reply, session.data.lead);
+    await sendMessage(phone, `${reply}\n\n${cierrePorPaso(session)}`);
+    return true;
+  } catch (err) {
+    console.error("Error recomendando entre opciones:", err.message);
+    return false;
+  }
+}
+
 // Consultas de producto (dilución, descripción, ficha): antes de responder se piden
 // nombre, empresa y contacto, para que el ejecutivo pueda hacer seguimiento.
 // Clientes que ya dieron sus datos (en esta conversación o en una cotización anterior
@@ -1049,9 +1102,9 @@ async function consultarProducto(phone, session, pregunta, ficha) {
   session.data.consultaPendiente = { pregunta, sku: ficha.sku, pasoAnterior: session.step };
   session.step = STEPS.LEAD_NOMBRE;
   await sendMessage(phone,
-    `Con gusto te cuento lo que dice la ficha de *${ficha.nombre}* 📄\n\n` +
-    `Antes, para registrar tu consulta y que un ejecutivo pueda ayudarte después: ¿cuál es tu *nombre*?\n\n` +
-    `_🔒 Usamos tus datos solo para atender tu consulta. Escribe *datos* cuando quieras corregirlos o eliminarlos._`);
+    `Con gusto le cuento lo que dice la ficha de *${ficha.nombre}* 📄\n\n` +
+    `Antes, para registrar su consulta y que un ejecutivo pueda ayudarle después: ¿cuál es su *nombre*?\n\n` +
+    `_🔒 Usamos sus datos solo para atender su consulta. Escriba *datos* cuando quiera corregirlos o eliminarlos._`);
   return true;
 }
 
@@ -1068,24 +1121,24 @@ async function manejarDatosConsulta(phone, session, text) {
     session.step = pendiente.pasoAnterior;
     delete d.consultaPendiente;
     await sendMessage(phone,
-      `Sin problema 🙂 Puedes ver la descripción y la ficha técnica en la tienda:\n${ficha.url}` +
+      `Sin problema. Puede ver la descripción y la ficha técnica en la tienda:\n${ficha.url}` +
       (ficha.fichaTecnica ? `\n📄 ${ficha.fichaTecnica}` : "") + `\n\n${cierrePorPaso(session)}`);
     return;
   }
 
   if (session.step === STEPS.LEAD_NOMBRE) {
     if (text.trim().length < 2 || text.includes("?") || /\d{3}/.test(text)) {
-      await sendMessage(phone, `⚠️ Indícame tu *nombre* para registrar la consulta.`);
+      await sendMessage(phone, `⚠️ Indíqueme su *nombre* para registrar la consulta.`);
       return;
     }
     d.leadNombre = text.trim().slice(0, 80);
     session.step = STEPS.LEAD_EMPRESA;
-    await sendMessage(phone, `Gracias, *${d.leadNombre.split(" ")[0]}*. ¿De qué *empresa* nos escribes? _(o tu RUT; si es para uso personal, responde *particular*)_`);
+    await sendMessage(phone, `Gracias, *${d.leadNombre.split(" ")[0]}*. ¿De qué *empresa* nos escribe? _(o su RUT; si es para uso personal, responda *particular*)_`);
     return;
   }
 
   if (session.step === STEPS.LEAD_EMPRESA) {
-    if (text.trim().length < 2) { await sendMessage(phone, `⚠️ Indícame el nombre de tu *empresa*, tu RUT o *particular*.`); return; }
+    if (text.trim().length < 2) { await sendMessage(phone, `⚠️ Indíqueme el nombre de su *empresa*, su RUT o *particular*.`); return; }
     if (validarRUT(text)) {
       const r = normalizarRUT(text);
       Object.assign(d, { rut: r, rutLimpio: r, rutSinDV: r.slice(0, -1) });
@@ -1095,14 +1148,14 @@ async function manejarDatosConsulta(phone, session, text) {
     }
     if (esCanalWeb(phone) && !d.contactoWeb && !d.emailCliente) {
       session.step = STEPS.LEAD_CONTACTO;
-      await sendMessage(phone, `📧 ¿A qué *correo o teléfono* te podemos contactar?`);
+      await sendMessage(phone, `📧 ¿A qué *correo o teléfono* le podemos contactar?`);
       return;
     }
   } else if (session.step === STEPS.LEAD_CONTACTO) {
     const correo = text.match(/[^\s@]+@[^\s@]+\.[^\s@]+/);
     const fono = text.replace(/\D/g, "");
     if (!correo && fono.length < 8) {
-      await sendMessage(phone, `⚠️ Indícame un *correo* (ej: nombre@empresa.cl) o un *teléfono* (ej: +56 9 1234 5678).`);
+      await sendMessage(phone, `⚠️ Indíqueme un *correo* (ej: nombre@empresa.cl) o un *teléfono* (ej: +56 9 1234 5678).`);
       return;
     }
     d.contactoWeb = correo ? correo[0] : `+${fono}`;
@@ -1119,7 +1172,7 @@ async function manejarDatosConsulta(phone, session, text) {
   session.step = pendiente.pasoAnterior;
   delete d.consultaPendiente;
   if (!await responderSobreProducto(phone, session, pendiente.pregunta, ficha)) {
-    await sendMessage(phone, `No pude leer la ficha en este momento; un ejecutivo te la enviará.\n\n${cierrePorPaso(session)}`);
+    await sendMessage(phone, `No pude leer la ficha en este momento; un ejecutivo se la enviará.\n\n${cierrePorPaso(session)}`);
   }
 }
 
@@ -1282,18 +1335,18 @@ async function aplicarCambiosPedido(phone, session, cambios) {
     lineas.push(`🚚 Despacho a: ${cambios.direccion}`);
   } else if (cambios.comuna) {
     session.data.comunaEntrega = cambios.comuna;
-    lineas.push(`🚚 Despacho a: ${cambios.comuna} (te pediré calle y número)`);
+    lineas.push(`🚚 Despacho a: ${cambios.comuna} (le pediré calle y número)`);
   }
 
   if (lineas.length === 0) return false;
   registrarConsulta(phone, "[cambio de pedido]", lineas.join(" | ")); // auditoría
-  await sendMessage(phone, `✏️ *Actualicé tu pedido:*\n\n${lineas.join("\n")}`);
+  await sendMessage(phone, `✏️ *Actualicé su pedido:*\n\n${lineas.join("\n")}`);
 
   if (nuevos.length > 0) {
     session.data.itemsPendientes = nuevos;
     if (!session.data.rows) session.data.rows = await cargarCSV();
     if (!session.data.rows) {
-      await sendMessage(phone, `⚠️ Error al acceder al catálogo. Intenta nuevamente en unos segundos.`);
+      await sendMessage(phone, `⚠️ Error al acceder al catálogo. Intente nuevamente en unos segundos.`);
       return true;
     }
     if (!session.data.productosNoEncontrados) session.data.productosNoEncontrados = [];
@@ -1302,7 +1355,7 @@ async function aplicarCambiosPedido(phone, session, cambios) {
     await procesarSiguienteProducto(phone, session);
   } else if (session.data.productosConfirmados.length === 0) {
     session.step = STEPS.WAITING_PRODUTOS;
-    await sendMessage(phone, `Tu pedido quedó vacío. 📦 ¿Qué productos necesitas cotizar?`);
+    await sendMessage(phone, `Su pedido quedó vacío. 📦 ¿Qué productos necesita cotizar?`);
   } else {
     await mostrarResumenFinal(phone, session);
   }
@@ -1446,8 +1499,8 @@ async function handleMessage(phone, text) {
     if (text === "/help") {
       await sendMessage(phone,
         `🧪 *Comandos de prueba disponibles:*\n` +
-        `• */reset* — Reinicia tu sesión (cliente nuevo)\n` +
-        `• */status* — Muestra el estado actual de tu sesión\n` +
+        `• */reset* — Reinicia su sesión (cliente nuevo)\n` +
+        `• */status* — Muestra el estado actual de su sesión\n` +
         `• */help* — Muestra este menú\n\n` +
         `_Los demás mensajes funcionan igual que para un cliente real._`
       );
@@ -1459,8 +1512,8 @@ async function handleMessage(phone, text) {
   if (/^(stop|detener|cancelar|salir|para|basta)$/i.test(normalizar(text))) {
     delete sessions[phone];
     await sendMessage(phone,
-      `✅ Tu conversación fue cerrada. Escribe *hola* cuando necesites cotizar nuevamente.\n\n` +
-      `_Si necesitas ayuda, un ejecutivo de ventas puede atenderte directamente._`
+      `✅ Su conversación fue cerrada. Escriba *hola* cuando necesite cotizar nuevamente.\n\n` +
+      `_Si necesita ayuda, un ejecutivo de ventas puede atenderle directamente._`
     );
     return;
   }
@@ -1469,10 +1522,10 @@ async function handleMessage(phone, text) {
   if (/^(datos|mis datos|privacidad|proteccion de datos|eliminar mis? datos|borrar mis? datos)$/i.test(normalizar(text))) {
     await sendMessage(phone,
       `🔒 *Tus datos personales en CINTEC*\n\n` +
-      `Para cotizarte guardamos solo lo necesario: *RUT, nombre, contacto y dirección de entrega*, con el fin de procesar tu cotización y despacho. ` +
+      `Para cotizarle guardamos solo lo necesario: *RUT, nombre, contacto y dirección de entrega*, con el fin de procesar su cotización y despacho. ` +
       `No los usamos para publicidad ni los compartimos con terceros ajenos al servicio.\n\n` +
-      `Tienes derecho a *acceder, corregir o eliminar* tu información. Para ejercerlo, escríbenos a *${DATOS_CONTACTO}* indicando tu RUT y qué necesitas.\n\n` +
-      `_Escribe *hola* para volver al menú._`
+      `Tiene derecho a *acceder, corregir o eliminar* su información. Para ejercerlo, escríbanos a *${DATOS_CONTACTO}* indicando su RUT y qué necesita.\n\n` +
+      `_Escriba *hola* para volver al menú._`
     );
     return;
   }
@@ -1482,13 +1535,13 @@ async function handleMessage(phone, text) {
     const conf = session.data.productosConfirmados || [];
     const anot = session.data.productosNoEncontrados || [];
     if (!conf.length && !anot.length) {
-      await sendMessage(phone, `🛒 Tu pedido está vacío por ahora.\n\n${cierrePorPaso(session) === CIERRE_POR_DEFECTO ? PREGUNTA_QUE_NECESITA : cierrePorPaso(session)}`);
+      await sendMessage(phone, `🛒 Su pedido está vacío por ahora.\n\n${cierrePorPaso(session) === CIERRE_POR_DEFECTO ? PREGUNTA_QUE_NECESITA : cierrePorPaso(session)}`);
     } else {
       await sendMessage(phone,
-        `🛒 *Tu pedido hasta ahora:*\n\n` +
+        `🛒 *Su pedido hasta ahora:*\n\n` +
         conf.map((it, i) => `${i + 1}. ${it.seleccionado?.DesProd} — *${it.cantidad} ${it.unidad}*`).join("\n") +
         (anot.length ? `\n\n📝 *Para cotizar a mano (precio a confirmar):*\n` + anot.map(n => `• ${n}`).join("\n") : "") +
-        `\n\n✏️ _Para cambiar algo dime, por ejemplo, "saca el cloro" o "que sean 3"._\n\n${cierrePorPaso(session)}`
+        `\n\n✏️ _Para cambiar algo indíqueme, por ejemplo, "saca el cloro" o "que sean 3"._\n\n${cierrePorPaso(session)}`
       );
     }
     return;
@@ -1511,7 +1564,7 @@ async function handleMessage(phone, text) {
       // y seguimos con el flujo normal de su mensaje
     } else {
       await sendMessage(phone,
-        `⚠️ Responde con el *número* de la cotización a la que corresponde tu pago (1 a ${max}).`
+        `⚠️ Responda con el *número* de la cotización a la que corresponde su pago (1 a ${max}).`
       );
       return;
     }
@@ -1542,7 +1595,7 @@ async function handleMessage(phone, text) {
     } else if (sinInteres) {
       if (cot) { cot.respuestaSeguimiento = "sin_interes"; guardarLog(); }
       await sendMessage(phone,
-        `Gracias por avisarnos. 🙏 Si más adelante necesitas cotizar, escribe *hola* y te atendemos al instante.`
+        `Gracias por avisarnos. 🙏 Si más adelante necesita cotizar, escriba *hola* y le atendemos al instante.`
       );
       session.step = STEPS.DONE;
       return;
@@ -1551,8 +1604,8 @@ async function handleMessage(phone, text) {
       if (cot) { cot.respuestaSeguimiento = "interesado"; guardarLog(); }
       await notificarSeguimientoInteresado(phone, cot, text);
       await sendMessage(phone,
-        `✅ ¡Excelente! Un *ejecutivo de CINTEC* te contactará a la brevedad para ayudarte con tu pedido.\n\n` +
-        `_Si necesitas cotizar algo más, escribe *hola*._`
+        `✅ ¡Excelente! Un *ejecutivo de CINTEC* le contactará a la brevedad para ayudarle con su pedido.\n\n` +
+        `_Si necesita cotizar algo más, escriba *hola*._`
       );
       session.step = STEPS.DONE;
       return;
@@ -1569,17 +1622,17 @@ async function handleMessage(phone, text) {
       registrarContacto(phone, session.data.razonSocial, "Solicitó ejecutivo durante cotización");
       await sendMessage(phone,
         `👤 Entendido, *${session.data.razonSocial}*. Un *ejecutivo de ventas* de CINTEC ` +
-        `se pondrá en contacto contigo a la brevedad.\n\n` +
-        `_Escribe *hola* si necesitas algo más._`
+        `se pondrá en contacto con usted a la brevedad.\n\n` +
+        `_Escriba *hola* si necesita algo más._`
       );
     } else {
       // Sin nombre aún: pedir nombre antes de notificar (saludo si es su primer mensaje)
       const esPrimerMensaje = session.step === STEPS.START;
       session.step = STEPS.CONTACTO_NOMBRE;
       await sendMessage(phone,
-        (esPrimerMensaje ? `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` : "") +
-        `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n` +
-        `¿Cuál es tu *nombre* para informarle?`
+        (esPrimerMensaje ? `👋 ¡Hola! Bienvenido/a a *CINTEC*. Le saluda el *Asistente CINTEC*.\n\n` : "") +
+        `👤 Con gusto le conectamos con un *ejecutivo de CINTEC*.\n\n` +
+        `¿Cuál es su *nombre* para informarle?`
       );
       return;
     }
@@ -1647,11 +1700,14 @@ async function handleMessage(phone, text) {
     // "Descríbeme este producto" con varias opciones a la vista: se pregunta cuál y,
     // al recibir el número, se responde sobre esa opción (sin agregarla al pedido).
     const opcionesVista = session.data.opcionesActuales || [];
+    // "¿Cuál me conviene si busco economía?" con varias opciones: se recomienda entre ellas
+    if (!ficha && session.step === STEPS.ELIGIENDO_OPCION && opcionesVista.length > 1 &&
+        PIDE_RECOMENDACION.test(normalizar(text)) && await recomendarEntreOpciones(phone, session, text)) return;
     if (!ficha && session.step === STEPS.ELIGIENDO_OPCION && opcionesVista.length > 1 &&
         !NO_ME_SIRVE.test(normalizar(text))) {
       session.data.preguntaPendiente = text;
       await sendMessage(phone,
-        `¿Sobre cuál de las opciones es tu consulta? Responde el *número* (1 al ${opcionesVista.length}) y te cuento lo que dice su ficha 📄`);
+        `¿Sobre cuál de las opciones es su consulta? Responda el *número* (1 al ${opcionesVista.length}) y le cuento lo que dice su ficha 📄`);
       return;
     }
   }
@@ -1678,12 +1734,12 @@ async function handleMessage(phone, text) {
       // volvemos a preguntar: vamos directo a pedir el RUT para cotizar.
       const prevSaludo = datosPrevios(phone);
       const saludoInicial = prevSaludo
-        ? `👋 ¡Hola de nuevo, *${prevSaludo.razonSocial}*! Qué gusto saludarte otra vez.`
-        : `👋 ¡Hola! Bienvenido/a a *CINTEC*.`;
+        ? `👋 ¡Hola de nuevo, *${prevSaludo.razonSocial}*! Le saluda el *Asistente CINTEC*, qué gusto atenderle nuevamente.`
+        : `👋 ¡Hola! Bienvenido/a a *CINTEC*. Le saluda el *Asistente CINTEC*.`;
       const productoDesdeLink = extraerProductoDeLink(text);
       if (productoDesdeLink) {
         session.data.textoProductos = productoDesdeLink;
-        await sendMessage(phone, `${saludoInicial}\n\nVi que te interesa *${productoDesdeLink}* 📦 — ¡vamos a cotizarlo!`);
+        await sendMessage(phone, `${saludoInicial}\n\nVeo que le interesa *${productoDesdeLink}* 📦 — ¡vamos a cotizarlo!`);
         session.step = STEPS.WAITING_PRODUTOS;
         await procesarProductos(phone, session);
         break;
@@ -1733,7 +1789,7 @@ async function handleMessage(phone, text) {
       if (pideEjecutivo || (intencion === "contacto" && !nombraProducto)) {
         session.step = STEPS.CONTACTO_NOMBRE;
         await sendMessage(phone, `${saludoInicial}\n\n` +
-          `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n¿Cuál es tu *nombre* para informarle?`
+          `👤 Con gusto le conectamos con un *ejecutivo de CINTEC*.\n\n¿Cuál es su *nombre* para informarle?`
         );
         break;
       }
@@ -1778,7 +1834,7 @@ async function handleMessage(phone, text) {
       // no volver a preguntarlo cuando lleguemos a buscar en el catálogo.
       const producto = extraerProductoDeLink(text) || (text.trim().length >= 3 ? text.trim() : null);
       if (!producto) {
-        await sendMessage(phone, `📦 Cuéntame el nombre del producto, o pégame el link de la página.`);
+        await sendMessage(phone, `📦 Cuénteme el nombre del producto, o pegue el link de la página.`);
         break;
       }
       session.data.textoProductos = producto;
@@ -1811,16 +1867,16 @@ async function handleMessage(phone, text) {
         session.data.rutSinDV  = null; // null no matchea historial → precio lista
         session.data.sinRut    = true;
         session.data.esClienteNuevo = true;
-        await sendMessage(phone, `👍 Sin problema, te cotizaré con *precio lista*.`);
+        await sendMessage(phone, `👍 Sin problema, le cotizaré con *precio lista*.`);
         await avanzarFlujoCotizacion(phone, session);
         break;
       }
       if (rechazaRut) {
         session.data.ofrecioSinRut = true;
         await sendMessage(phone,
-          `El RUT solo lo uso para buscar tus *precios preferenciales* si ya eres cliente de CINTEC. 😊\n\n` +
-          `Si prefieres no entregarlo, puedo cotizarte con *precio lista*.\n\n` +
-          `Responde *sí* para continuar sin RUT, o ingresa tu *RUT* para buscar tus precios.`
+          `El RUT solo lo uso para buscar sus *precios preferenciales* si ya es cliente de CINTEC. 😊\n\n` +
+          `Si prefiere no entregarlo, puedo cotizarle con *precio lista*.\n\n` +
+          `Responda *sí* para continuar sin RUT, o ingrese su *RUT* para buscar sus precios.`
         );
         break;
       }
@@ -1828,16 +1884,16 @@ async function handleMessage(phone, text) {
       const digitosEnTexto = (text.match(/\d/g) || []).length;
       if (digitosEnTexto < 6) {
         const reencauce = pareceFueraDeTema(text)
-          ? `😊 Estoy aquí solo para ayudarte con *cotizaciones de CINTEC*.\n\n`
+          ? `😊 Estoy aquí solo para ayudarle con *cotizaciones de CINTEC*.\n\n`
           : "";
         await sendMessage(phone,
           reencauce +
-          `Para enviarte la cotización necesito tu RUT. 😊\n\n` +
-          `Si tienes *RUT de empresa*, ingrésalo.\n` +
-          `De lo contrario, ingresa tu *RUT personal*.\n\n` +
+          `Para enviarle la cotización necesito su RUT. 😊\n\n` +
+          `Si tiene *RUT de empresa*, ingréselo.\n` +
+          `De lo contrario, ingrese su *RUT personal*.\n\n` +
           `_Ej empresa: 76.123.456-7_\n` +
           `_Ej personal: 12.345.678-9_` +
-          (session.data.ofrecioSinRut ? `\n\n_O responde *sí* para cotizar sin RUT con precio lista._` : "")
+          (session.data.ofrecioSinRut ? `\n\n_O responda *sí* para cotizar sin RUT con precio lista._` : "")
         );
         break;
       }
@@ -1871,11 +1927,11 @@ async function handleMessage(phone, text) {
 
     case STEPS.WAITING_RAZON: {
       if (/^(no tengo|no|sin empresa|sin nombre|nada)$/i.test(normalizar(text))) {
-        await sendMessage(phone, `⚠️ Necesito tu nombre o razón social para la cotización.\n¿Cuál es tu *nombre o razón social*?`);
+        await sendMessage(phone, `⚠️ Necesito su nombre o razón social para la cotización.\n¿Cuál es su *nombre o razón social*?`);
         break;
       }
       if (text.length < 3) {
-        await sendMessage(phone, `⚠️ Ingresa tu nombre o razón social.`);
+        await sendMessage(phone, `⚠️ Ingrese su nombre o razón social.`);
         break;
       }
       session.data.razonSocial = text;
@@ -1906,7 +1962,7 @@ async function handleMessage(phone, text) {
           session.data.sinRut = true;
           session.data.esClienteNuevo = true;
         }
-        await sendMessage(phone, `✅ Perfecto, uso tus datos de la última vez.`);
+        await sendMessage(phone, `✅ Perfecto, uso sus datos de la última vez.`);
         await avanzarDatos(phone, session);
         break;
       }
@@ -1921,7 +1977,7 @@ async function handleMessage(phone, text) {
     }
 
     case STEPS.WAITING_PRODUTOS:
-      if (text.length < 3) { await sendMessage(phone, `⚠️ Describe los productos que necesitas.`); break; }
+      if (text.length < 3) { await sendMessage(phone, `⚠️ Describa los productos que necesita.`); break; }
       // Botón "Cotizar este producto" / "Consultar por WhatsApp" de la tienda, o "¿tienen cloro gel?"
       session.data.textoProductos = extraerProductoDeLink(text) || limpiarPedidoInicial(text);
       // "2 unidades" / "quiero 3" después de consultar por un producto → ese producto
@@ -1953,7 +2009,7 @@ async function handleMessage(phone, text) {
       const correo = text.match(/[^\s@]+@[^\s@]+\.[^\s@]+/);
       const fono = text.replace(/\D/g, "");
       if (!correo && fono.length < 8) {
-        await sendMessage(phone, `⚠️ Indícame un *correo* (ej: nombre@empresa.cl) o un *teléfono* (ej: +56 9 1234 5678).`);
+        await sendMessage(phone, `⚠️ Indíqueme un *correo* (ej: nombre@empresa.cl) o un *teléfono* (ej: +56 9 1234 5678).`);
         break;
       }
       session.data.contactoWeb = correo ? correo[0] : `+${fono}`;
@@ -1967,7 +2023,7 @@ async function handleMessage(phone, text) {
 
     case STEPS.WAITING_ENTREGA:
       if (text.length < 5) {
-        await sendMessage(phone, `⚠️ Ingresa una dirección de entrega válida (calle, comuna y ciudad).`);
+        await sendMessage(phone, `⚠️ Ingrese una dirección de entrega válida (calle, comuna y ciudad).`);
         break;
       }
       // "Agrega 10 paquetes de toalla de 250 y despáchalo a Puerto Montt" tiene números y
@@ -1982,9 +2038,9 @@ async function handleMessage(phone, text) {
         const atendido = await responderConsulta(phone, session, text, cierrePorPaso(session));
         if (!atendido) {
           await sendMessage(phone,
-            `🤔 No reconocí una dirección en tu mensaje.\n\n` +
+            `🤔 No reconocí una dirección en su mensaje.\n\n` +
             `📦 ¿Cuál es la *dirección de entrega*? (calle, número, comuna y ciudad)\n` +
-            `_Si quieres cambiar algo del pedido, escribe *hola* para empezar de nuevo._`);
+            `_Si quiere cambiar algo del pedido, escriba *hola* para empezar de nuevo._`);
         }
         break;
       }
@@ -1995,8 +2051,8 @@ async function handleMessage(phone, text) {
       if (session.data.requiereFlete) {
         await sendMessage(phone,
           `ℹ️ En esa comuna *no realizamos entregas directas*.\n\n` +
-          `Tu pedido se despacha por *flete externo* y su valor se cotiza por separado — ` +
-          `un ejecutivo te confirmará el costo del envío. 🚚`
+          `Su pedido se despacha por *flete externo* y su valor se cotiza por separado — ` +
+          `un ejecutivo le confirmará el costo del envío. 🚚`
         );
       }
       await avanzarDatos(phone, session); // siguiente dato que falte (correo) o envío
@@ -2006,9 +2062,9 @@ async function handleMessage(phone, text) {
       if (!text.includes("@") || !text.includes(".")) {
         if (await intentarCambioPedido(phone, session, text)) break;
         const reencauceMail = pareceFueraDeTema(text)
-          ? `😊 Estoy aquí solo para ayudarte con tu cotización de CINTEC.\n\n`
+          ? `😊 Estoy aquí solo para ayudarle con su cotización de CINTEC.\n\n`
           : "";
-        await sendMessage(phone, reencauceMail + `📧 Ingresa un *correo electrónico válido* para enviarte la cotización.`);
+        await sendMessage(phone, reencauceMail + `📧 Ingrese un *correo electrónico válido* para enviarle la cotización.`);
         break;
       }
       session.data.emailCliente = (text.match(/[^\s@]+@[^\s@]+\.[^\s@]+/) || [text])[0].toLowerCase();
@@ -2028,7 +2084,7 @@ async function handleMessage(phone, text) {
       break;
 
     case STEPS.HIDRO_ESPERANDO:
-      await sendMessage(phone, `⏳ Tu cotización está siendo preparada por un especialista. Te avisaremos cuando esté lista.`);
+      await sendMessage(phone, `⏳ Su cotización está siendo preparada por un especialista. Le avisaremos cuando esté lista.`);
       break;
 
     case STEPS.HIDRO_EMAIL:
@@ -2050,16 +2106,16 @@ async function handleMessage(phone, text) {
       // tiene contexto de que el PDF ya se mandó recién y termina inventando
       // una respuesta confusa (ej. "un ejecutivo te contactará para enviarla").
       if (/^(gracias|muchas gracias|ok|okay|dale|listo|perfecto|genial|excelente|de nada|bien)\.?!?$/i.test(normalizar(text).trim())) {
-        await sendMessage(phone, `¡De nada! 🙏 Escribe *hola* si necesitas algo más.`);
+        await sendMessage(phone, `¡De nada! 🙏 Escriba *hola* si necesita algo más.`);
         break;
       }
       // Tras terminar, el cliente puede hacer una pregunta de seguimiento
       // (ej. "¿y el despacho a Osorno?") en vez de escribir "hola" — se
       // intenta responder con IA antes de caer en el mensaje genérico fijo.
-      const atendido = await responderConsulta(phone, session, text, "_Escribe *hola* si necesitas algo más._");
+      const atendido = await responderConsulta(phone, session, text, "_Escriba *hola* si necesita algo más._");
       if (!atendido) {
         await sendMessage(phone,
-          `✅ Tu solicitud fue procesada.\n\nEscribe *hola* cuando necesites cotizar o contactar a un ejecutivo.`
+          `✅ Su solicitud fue procesada.\n\nEscriba *hola* cuando necesite cotizar o contactar a un ejecutivo.`
         );
       }
       break;
@@ -2080,8 +2136,8 @@ async function manejarMenuInicio(phone, session, text) {
   if (esContacto) {
     session.step = STEPS.CONTACTO_NOMBRE;
     await sendMessage(phone,
-      `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n` +
-      `¿Cuál es tu *nombre* para informarle?`
+      `👤 Con gusto le conectamos con un *ejecutivo de CINTEC*.\n\n` +
+      `¿Cuál es su *nombre* para informarle?`
     );
     return;
   }
@@ -2089,8 +2145,8 @@ async function manejarMenuInicio(phone, session, text) {
   if (mencionaProductoVago) {
     session.step = STEPS.ESPERANDO_PRODUCTO;
     await sendMessage(phone,
-      `📦 ¡Claro! ¿Qué producto te interesa?\n\n` +
-      `Cuéntame el nombre, o pégame el link de la página.`
+      `📦 ¡Claro! ¿Qué producto le interesa?\n\n` +
+      `Cuénteme el nombre, o pegue el link de la página.`
     );
     return;
   }
@@ -2116,15 +2172,15 @@ async function manejarMenuInicio(phone, session, text) {
   if (intencion === "contacto") {
     session.step = STEPS.CONTACTO_NOMBRE;
     await sendMessage(phone,
-      `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n` +
-      `¿Cuál es tu *nombre* para informarle?`
+      `👤 Con gusto le conectamos con un *ejecutivo de CINTEC*.\n\n` +
+      `¿Cuál es su *nombre* para informarle?`
     );
     return;
   }
 
   // Intención no clara → repetir menú
   await sendMessage(phone,
-    `No entendí tu selección. Por favor elige una opción:\n\n` +
+    `No entendí su selección. Por favor elija una opción:\n\n` +
     `*1.* 📦 Cotizar productos\n` +
     `*2.* 👤 Contactar con un ejecutivo`
   );
@@ -2186,14 +2242,14 @@ async function avanzarFlujoCotizacion(phone, session) {
 }
 
 const PREGUNTA_QUE_NECESITA =
-  `📦 ¿Qué necesitas cotizar hoy?\n\n` +
-  `Puedes escribirme el producto y la cantidad (_"lavaloza 10 unidades, toalla 2 paquetes"_), ` +
-  `contarme para qué lo necesitas o pegar el link de la página.\n\n` +
-  `_Si prefieres hablar con un ejecutivo, escríbelo._`;
+  `📦 ¿Qué necesita cotizar hoy?\n\n` +
+  `Puede escribirme el producto y la cantidad (_"lavaloza 10 unidades, toalla 2 paquetes"_), ` +
+  `contarme para qué lo necesita o pegar el link de la página.\n\n` +
+  `_Si prefiere hablar con un ejecutivo, escríbalo._`;
 
 const AVISO_DATOS =
-  `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. ` +
-  `Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._`;
+  `🔒 _Para cotizarle guardamos su RUT, nombre, contacto y dirección con el único fin de procesar su cotización y despacho. ` +
+  `Escriba *datos* cuando quiera acceder, corregir o eliminar su información._`;
 
 // "111111111" → "11.111.111-1"
 function formatearRut(rut) {
@@ -2239,9 +2295,9 @@ async function pedirRut(phone, session) {
   session.step = STEPS.WAITING_RUT;
   await sendMessage(phone,
     `${AVISO_DATOS}\n\n` +
-    `Para enviarte la cotización necesito algunos datos. Si tienes *RUT de empresa*, ingrésalo; ` +
-    `de lo contrario, tu *RUT personal*.\n\n_Ej empresa: 76.123.456-7 · Ej personal: 12.345.678-9_\n` +
-    `_Si prefieres no darlo, responde *sin rut* y te cotizo con precio lista._`
+    `Para enviarle la cotización necesito algunos datos. Si tiene *RUT de empresa*, ingréselo; ` +
+    `de lo contrario, su *RUT personal*.\n\n_Ej empresa: 76.123.456-7 · Ej personal: 12.345.678-9_\n` +
+    `_Si prefiere no darlo, responda *sin rut* y le cotizo con precio lista._`
   );
 }
 
@@ -2257,11 +2313,11 @@ async function avanzarDatos(phone, session) {
       d.datosPreviosOfrecidos = prev;
       session.step = STEPS.DATOS_PREVIOS;
       await sendMessage(phone,
-        `¿Usamos tus datos de la última vez?\n\n` +
+        `¿Usamos sus datos de la última vez?\n\n` +
         `👤 *${prev.razonSocial}*${prev.rut ? ` (RUT ${formatearRut(prev.rut)})` : ""}\n` +
         (d.soloEjecutivo ? "" : `🚚 ${prev.direccionEntrega || "—"}\n`) +
         `📧 ${prev.emailCliente}\n\n` +
-        `Responde *sí* para continuar con estos datos, o *no* para ingresarlos de nuevo.`
+        `Responda *sí* para continuar con estos datos, o *no* para ingresarlos de nuevo.`
       );
       return;
     }
@@ -2269,21 +2325,21 @@ async function avanzarDatos(phone, session) {
   if (!d.rut && !d.sinRut) return pedirRut(phone, session);
   if (!d.razonSocial) {
     session.step = STEPS.WAITING_RAZON;
-    await sendMessage(phone, `¿Cuál es tu *nombre o razón social*?`);
+    await sendMessage(phone, `¿Cuál es su *nombre o razón social*?`);
     return;
   }
   if (d.soloEjecutivo) {
     // Solo productos "precio a confirmar": el ejecutivo cotiza a mano
     if (esCanalWeb(phone) && !d.contactoWeb && !d.emailCliente) {
       session.step = STEPS.WEB_CONTACTO;
-      await sendMessage(phone, `📧 Para que el ejecutivo te envíe la cotización, ¿a qué *correo o teléfono* te contactamos?`);
+      await sendMessage(phone, `📧 Para que el ejecutivo le envíe la cotización, ¿a qué *correo o teléfono* le contactamos?`);
       return;
     }
     if (!d.contactoWeb && d.emailCliente) d.contactoWeb = d.emailCliente;
     session.step = STEPS.DONE;
     await sendMessage(phone,
-      `📋 *Tu solicitud quedó registrada:*\n\n` + (d.productosNoEncontrados || []).map(n => `• ${n}`).join("\n") +
-      `\n\n👤 Un *ejecutivo de CINTEC* te enviará la cotización con precios a la brevedad.\n\n_Escribe *hola* si necesitas algo más._`
+      `📋 *Su solicitud quedó registrada:*\n\n` + (d.productosNoEncontrados || []).map(n => `• ${n}`).join("\n") +
+      `\n\n👤 Un *ejecutivo de CINTEC* le enviará la cotización con precios a la brevedad.\n\n_Escriba *hola* si necesita algo más._`
     );
     await notificarInterno(phone, d);
     return;
@@ -2346,7 +2402,7 @@ async function clasificarIntencion(text) {
 // ─── Flujo de contacto con ejecutivo ─────────────────────────────────────────
 async function manejarContactoNombre(phone, session, text) {
   if (text.length < 2) {
-    await sendMessage(phone, `⚠️ Ingresa tu nombre para continuar.`);
+    await sendMessage(phone, `⚠️ Ingrese su nombre para continuar.`);
     return;
   }
   // El cliente escribió lo que necesita en vez de su nombre (ej. "necesito cotizar
@@ -2361,7 +2417,7 @@ async function manejarContactoNombre(phone, session, text) {
   session.step = STEPS.CONTACTO_MOTIVO;
   await sendMessage(phone,
     `¡Hola, *${text}*! 👋\n\n` +
-    `¿En qué podemos ayudarte? Cuéntanos brevemente el motivo de tu consulta.`
+    `¿En qué podemos ayudarle? Cuéntenos brevemente el motivo de su consulta.`
   );
 }
 
@@ -2373,9 +2429,9 @@ async function manejarContactoMotivo(phone, session, text) {
   registrarContacto(phone, nombre, text);
 
   await sendMessage(phone,
-    `✅ ¡Listo, *${nombre}*! Tu solicitud fue enviada a nuestro equipo.\n\n` +
-    `Un *ejecutivo de CINTEC* se pondrá en contacto contigo a la brevedad por este mismo número.\n\n` +
-    `_Si necesitas cotizar productos mientras tanto, escribe *hola* para volver al menú._`
+    `✅ ¡Listo, *${nombre}*! Su solicitud fue enviada a nuestro equipo.\n\n` +
+    `Un *ejecutivo de CINTEC* se pondrá en contacto con usted a la brevedad por este mismo número.\n\n` +
+    `_Si necesita cotizar productos mientras tanto, escriba *hola* para volver al menú._`
   );
   session.step = STEPS.DONE;
   setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
@@ -2486,7 +2542,7 @@ async function procesarProductos(phone, session) {
   }
 
   const rows = await cargarCSV();
-  if (!rows) { await sendMessage(phone, `⚠️ Error al acceder al catálogo. Intenta nuevamente en unos segundos.`); return; }
+  if (!rows) { await sendMessage(phone, `⚠️ Error al acceder al catálogo. Intente nuevamente en unos segundos.`); return; }
 
   // Detectar si cliente tiene historial
   const filasCliente = rows.filter(row =>
@@ -2527,11 +2583,11 @@ async function buscarParaClienteExistente(phone, session, item) {
     session.data.resultadoActual    = resultado;
     session.data.modoAlternativas   = false;
     const p = resultado.principal;
-    let msg = `📦 Encontré este producto en tu historial:\n\n`;
+    let msg = `📦 Encontré este producto en su historial:\n\n`;
     msg += `*${p.DesProd}*\n`;
     msg += `🏷️ Código: ${p.CodProd}\n`;
     msg += `📅 Última compra: ${p.fecha}\n\n`;
-    msg += `¿Es este el producto correcto? Responde *sí* o *no*.`;
+    msg += `¿Es este el producto correcto? Responda *sí* o *no*.`;
     session.step = STEPS.CONFIRMANDO;
     await sendMessage(phone, msg);
   } else if (resultado.bajoMargen) {
@@ -2590,7 +2646,7 @@ function agregarOpcionElegida(session, p, item) {
   });
   return true;
 }
-const AVISO_SIN_PRECIO = `ℹ️ Ese producto aún no está en nuestra lista de precios automática: lo dejo anotado y *un ejecutivo te confirma el precio*.`;
+const AVISO_SIN_PRECIO = `ℹ️ Ese producto aún no está en nuestra lista de precios automática: lo dejo anotado y *un ejecutivo le confirma el precio*.`;
 
 // ¿Es razonable que esto sea un producto que un cliente le pediría a CINTEC?
 // Solo se consulta cuando no se encontró nada (pocas llamadas). Ante error: sí.
@@ -2754,9 +2810,9 @@ async function buscarParaClienteNuevo(phone, session, item) {
     session.step = STEPS.WAITING_FORMATO;
 
     let msg = `📦 Encontré varias presentaciones de _"${item.nombre}"_.\n\n`;
-    msg += `¿Qué formato necesitas?\n\n`;
+    msg += `¿Qué formato necesita?\n\n`;
     formatos.forEach((f, i) => { msg += `*${i + 1}.* ${etiquetaFormato(f, resultado)}\n`; });
-    msg += `\nResponde con el *número* del formato que necesitas.`;
+    msg += `\nResponda con el *número* del formato que necesita.`;
     await sendMessage(phone, msg);
   } else if (formatoNoEncontrado && formatos.length > 1) {
     // Formato pedido no existe → avisar y mostrar los disponibles
@@ -2767,7 +2823,7 @@ async function buscarParaClienteNuevo(phone, session, item) {
     let msg = `ℹ️ No tenemos _"${item.nombre}"_ en formato *${item.formatoEspecificado}*.\n\n`;
     msg += `Los formatos disponibles son:\n\n`;
     formatos.forEach((f, i) => { msg += `*${i + 1}.* ${etiquetaFormato(f, resultado)}\n`; });
-    msg += `\nResponde con el *número* del que necesitas.`;
+    msg += `\nResponda con el *número* del que necesita.`;
     await sendMessage(phone, msg);
   } else {
     if (formatoNoEncontrado) {
@@ -2797,7 +2853,7 @@ async function manejarFormato(phone, session, text) {
 
   if (!formatoElegido) {
     const lista = formatos.map((f, i) => `*${i + 1}.* ${etiquetaFormato(f, session.data.opcionesEncontradas || [])}`).join("\n");
-    await sendMessage(phone, `⚠️ No reconocí ese formato. Elige con un número o escribe el formato exacto:\n\n${lista}`);
+    await sendMessage(phone, `⚠️ No reconocí ese formato. Elija con un número o escriba el formato exacto:\n\n${lista}`);
     await registrarError(phone, session);
     return;
   }
@@ -2823,12 +2879,12 @@ async function mostrarOpcionesProducto(phone, session, opciones, item, encabezad
   lista.forEach((p, i) => {
     const prov = abreviarProveedor(p.Proveedor);
     msg += `*${i + 1}.* ${p.DesProd}\n`;
-    msg += `   🏭 ${prov}\n\n`;
+    msg += `   Marca: ${prov}\n\n`;
   });
 
   const instruccion = lista.length > 1
-    ? `Responde con el *número* de tu elección o escribe *todos* para cotizarlos todos.`
-    : `Responde *sí* para confirmar o *no* para cancelar.`;
+    ? `Responda con el *número* de su elección o escriba *todos* para cotizarlos todos.`
+    : `Responda *sí* para confirmar o *no* para cancelar.`;
 
   if (esCanalWeb(phone)) {
     // Chat web: tarjetas con foto y link a la ficha de la tienda (datos de cintecsa.cl)
@@ -2873,7 +2929,7 @@ async function manejarEleccionOpcion(phone, session, text) {
       delete session.data.preguntaPendiente;
       const ficha = catalogoWeb.porSku(lista[num - 1].CodProd);
       if (ficha && await consultarProducto(phone, session, pregunta, ficha)) return;
-      await sendMessage(phone, `No tengo la ficha de *${lista[num - 1].DesProd}* a mano; un ejecutivo te la puede enviar.\n\n${cierrePorPaso(session)}`);
+      await sendMessage(phone, `No tengo la ficha de *${lista[num - 1].DesProd}* a mano; un ejecutivo se la puede enviar.\n\n${cierrePorPaso(session)}`);
       return;
     } else if (!isNaN(num) && num >= 1 && num <= lista.length) {
       const p = lista[num - 1];
@@ -2888,9 +2944,9 @@ async function manejarEleccionOpcion(phone, session, text) {
       session.data.itemsPendientes.shift();
       session.step = STEPS.WAITING_PRODUTOS;
       await sendMessage(phone,
-        `Entendido 👍, esas opciones no te sirven.\n\n` +
-        `Cuéntame *para qué lo necesitas* (ej: _"lavar pisos de oficina"_, _"lavar loza a mano"_, _"desinfectar baños"_) ` +
-        `y te busco opciones más adecuadas.`
+        `Entendido 👍, esas opciones no le sirven.\n\n` +
+        `Cuénteme *para qué lo necesita* (ej: _"lavar pisos de oficina"_, _"lavar loza a mano"_, _"desinfectar baños"_) ` +
+        `y le busco opciones más adecuadas.`
       );
       return;
     } else {
@@ -2916,7 +2972,7 @@ async function manejarEleccionOpcion(phone, session, text) {
         return;
       }
 
-      await sendMessage(phone, `⚠️ Responde con un número, *todos* o *no*.`);
+      await sendMessage(phone, `⚠️ Responda con un número, *todos* o *no*.`);
       await registrarError(phone, session);
       return;
     }
@@ -2927,7 +2983,7 @@ async function manejarEleccionOpcion(phone, session, text) {
   // Elegido un producto sin precio automático y sin cantidad → preguntarla igual
   if ((session.data.sinPrecioSinCantidad || []).length && session.data.productosConfirmados.length === cantidadAntes) {
     session.step = STEPS.WAITING_CANTIDAD;
-    await sendMessage(phone, `📦 ¿Cuántas unidades necesitas?`);
+    await sendMessage(phone, `📦 ¿Cuántas unidades necesita?`);
     return;
   }
 
@@ -2937,11 +2993,11 @@ async function manejarEleccionOpcion(phone, session, text) {
     session.step = STEPS.WAITING_CANTIDAD;
     session.data.cantidadPendienteCount = productosAgregados;
     if (productosAgregados > 1) {
-      await sendMessage(phone, `📦 ¿Cuántas unidades necesitas de cada presentación?`);
+      await sendMessage(phone, `📦 ¿Cuántas unidades necesita de cada presentación?`);
     } else {
       const prod = session.data.productosConfirmados[session.data.productosConfirmados.length - 1];
       const desc = prod?.seleccionado?.DesProd || "este producto";
-      await sendMessage(phone, `📦 ¿Cuántas unidades necesitas?\n_${desc}_`);
+      await sendMessage(phone, `📦 ¿Cuántas unidades necesita?\n_${desc}_`);
     }
     return;
   }
@@ -2953,7 +3009,7 @@ async function manejarEleccionOpcion(phone, session, text) {
 async function continuarTrasEleccion(phone, session) {
   if (session.data.itemsPendientes.length === 0) {
     session.step = STEPS.WAITING_MAS;
-    await sendMessage(phone, `¿Necesitas cotizar algo más? Responde *sí* para agregar productos o *no* para continuar.`);
+    await sendMessage(phone, `¿Necesita cotizar algo más? Responda *sí* para agregar productos o *no* para continuar.`);
   } else {
     await procesarSiguienteProducto(phone, session);
   }
@@ -2964,7 +3020,7 @@ async function manejarCantidad(phone, session, text) {
   const match = text.match(/\d+/);
   const num = match ? parseInt(match[0]) : NaN;
   if (isNaN(num) || num < 1) {
-    await sendMessage(phone, `⚠️ Ingresa una cantidad válida (número mayor a 0).`);
+    await sendMessage(phone, `⚠️ Ingrese una cantidad válida (número mayor a 0).`);
     await registrarError(phone, session);
     return;
   }
@@ -2997,7 +3053,7 @@ async function manejarMasProductos(phone, session, text) {
   } else if (/^(si|sí|s|yes|ok|claro|bueno)$/i.test(textNorm)) {
     session.step = STEPS.WAITING_PRODUTOS;
     await sendMessage(phone,
-      `📦 ¿Qué más necesitas?\n_Indica producto y cantidad:_\n_"papel higienico 3 paquetes"_`
+      `📦 ¿Qué más necesita?\n_Indique producto y cantidad:_\n_"papel higienico 3 paquetes"_`
     );
   } else {
     // Pregunta sobre un producto ("¿para qué sirve el suma plaq?") → se responde y se vuelve a preguntar
@@ -3080,7 +3136,7 @@ async function manejarConfirmacion(phone, session, text) {
       return;
     }
 
-    await sendMessage(phone, `⚠️ Responde con un número entre 1 y ${opciones.length}.`);
+    await sendMessage(phone, `⚠️ Responda con un número entre 1 y ${opciones.length}.`);
     await registrarError(phone, session);
     return;
   }
@@ -3101,7 +3157,7 @@ async function manejarConfirmacion(phone, session, text) {
   if (/^(no|n|nop|incorrecto|otro)$/i.test(textNorm)) {
     if (resultado.alternativas.length === 0) {
       await sendMessage(phone,
-        `ℹ️ No hay más opciones en tu historial para _"${item.nombre}"_.\n` +
+        `ℹ️ No hay más opciones en su historial para _"${item.nombre}"_.\n` +
         `Buscaré en catálogo general...`
       );
       await buscarParaClienteNuevo(phone, session, item);
@@ -3113,7 +3169,7 @@ async function manejarConfirmacion(phone, session, text) {
       msg += `*${i + 1}.* ${p.DesProd}\n`;
       msg += `   📅 Última compra: ${p.fecha}\n\n`;
     });
-    msg += `Responde con el *número* de tu elección.`;
+    msg += `Responda con el *número* de su elección.`;
     session.data.modoAlternativas = true;
     await sendMessage(phone, msg);
     return;
@@ -3140,7 +3196,7 @@ async function manejarConfirmacion(phone, session, text) {
     return;
   }
 
-  await sendMessage(phone, `⚠️ No entendí. Por favor responde *sí* o *no*.`);
+  await sendMessage(phone, `⚠️ No entendí. Por favor responda *sí* o *no*.`);
   await registrarError(phone, session);
 }
 
@@ -3150,12 +3206,12 @@ async function siguientePasoTrasConfirmacion(phone, session) {
   if (!item.cantidadEspecificada) {
     session.step = STEPS.WAITING_CANTIDAD;
     session.data.cantidadPendienteCount = 1;
-    await sendMessage(phone, `📦 ¿Cuántas unidades necesitas de este producto?`);
+    await sendMessage(phone, `📦 ¿Cuántas unidades necesita de este producto?`);
     return;
   }
   if (session.data.itemsPendientes.length === 0) {
     session.step = STEPS.WAITING_MAS;
-    await sendMessage(phone, `¿Necesitas cotizar algo más? Responde *sí* o *no*.`);
+    await sendMessage(phone, `¿Necesita cotizar algo más? Responda *sí* o *no*.`);
   } else {
     await procesarSiguienteProducto(phone, session);
   }
@@ -3171,7 +3227,7 @@ async function mostrarResumenFinal(phone, session) {
     if (noEncontrados.length === 0) {
       // Nada que cotizar todavía: seguir en "¿qué necesitas?" en vez de cerrar
       session.step = STEPS.WAITING_PRODUTOS;
-      await sendMessage(phone, `ℹ️ Aún no hay productos en tu pedido.\n\n${PREGUNTA_QUE_NECESITA}`);
+      await sendMessage(phone, `ℹ️ Aún no hay productos en su pedido.\n\n${PREGUNTA_QUE_NECESITA}`);
       return;
     }
     // Solo productos para cotizar a mano (sin precio automático / no encontrados):
@@ -3182,7 +3238,7 @@ async function mostrarResumenFinal(phone, session) {
     return;
   }
 
-  let msg = `📋 *Resumen de tu solicitud:*\n\n`;
+  let msg = `📋 *Resumen de su solicitud:*\n\n`;
   confirmados.forEach((item, i) => {
     const p = item.seleccionado;
     msg += `*${i + 1}. ${p.DesProd}*\n`;
@@ -3190,7 +3246,7 @@ async function mostrarResumenFinal(phone, session) {
     msg += `   📦 Cantidad: ${item.cantidad} ${item.unidad}\n\n`;
   });
 
-  msg += `📧 Los *precios y el total* van incluidos en la cotización que enviaremos a tu correo.\n\n`;
+  msg += `📧 Los *precios y el total* van incluidos en la cotización que enviaremos a su correo.\n\n`;
   msg += `🕒 *Vigencia de precios:* 72 horas\n`;
   msg += `🚚 *Despacho:* Puerto Montt\n`;
   // La condición de pago depende de si es cliente con historial: solo se sabe con el RUT
@@ -3202,19 +3258,19 @@ async function mostrarResumenFinal(phone, session) {
   if (bajoMargen.length > 0) {
     msg += `⚠️ Estos productos requieren actualización de precios:\n`;
     bajoMargen.forEach(p => { msg += `• ${p.nombre}\n`; });
-    msg += `_Un representante te contactará._\n\n`;
+    msg += `_Un representante le contactará._\n\n`;
   }
   if (noEncontrados.length > 0) {
     msg += `ℹ️ No encontrado en catálogo: ${noEncontrados.join(", ")}\nUn representante revisará disponibilidad.\n\n`;
   }
 
-  msg += `✏️ _Si algo no está bien, dime qué cambiar (ej: "saca el cloro" o "que sean 3")._`;
+  msg += `✏️ _Si algo no está bien, indíqueme qué cambiar (ej: "saca el cloro" o "que sean 3")._`;
 
   if (session.data.direccionEntrega) {
     // Volvió al resumen tras corregir el pedido: la dirección ya la dio
     msg += `\n\n🚚 Despacho a: ${session.data.direccionEntrega}`;
     if (session.data.requiereFlete) {
-      msg += `\nℹ️ En esa comuna *no realizamos entregas directas*: el envío va por flete externo y un ejecutivo te confirmará su costo.`;
+      msg += `\nℹ️ En esa comuna *no realizamos entregas directas*: el envío va por flete externo y un ejecutivo le confirmará su costo.`;
     }
   }
   await sendMessage(phone, msg);
@@ -3588,8 +3644,8 @@ async function reenviarCotizacionPorWhatsapp(phone) {
     const ultima = [...cotizacionesLog].reverse().find(e => e.tipo === "cotizacion" && e.phone === phone);
     if (!ultima) {
       await sendMessage(phone,
-        `No encontré una cotización reciente a tu nombre por este medio. Si ya te llegó por correo, ` +
-        `revisa esa casilla; o escribe *cotizar* para armar una nueva. 🙏`
+        `No encontré una cotización reciente a su nombre por este medio. Si ya le llegó por correo, ` +
+        `revise esa casilla; o escriba *cotizar* para armar una nueva. 🙏`
       );
       return;
     }
@@ -3618,7 +3674,7 @@ async function reenviarCotizacionPorWhatsapp(phone) {
     await enviarDocumentoWhatsapp(phone, mediaId, `Cotizacion-${folio}.pdf`, `Cotización ${folio}`);
   } catch (err) {
     console.error("Error reenviando cotización por WhatsApp:", err.message);
-    await sendMessage(phone, `⚠️ No pude mandarte el PDF por este medio. Ya te llegó por correo a tu casilla registrada.`);
+    await sendMessage(phone, `⚠️ No pude enviarle el PDF por este medio. Ya le llegó por correo a su casilla registrada.`);
   }
 }
 
@@ -3714,8 +3770,8 @@ async function enviarCotizacionCompleta(phone, data) {
 
     registrarCotizacion(phone, data);
     await sendMessage(phone,
-      `✅ ¡Listo! Tu cotización *${folio}* fue enviada a *${data.emailCliente}*.\n\n` +
-      `¡Gracias por preferirnos! Escribe *hola* si necesitas algo más. 🙏`
+      `✅ ¡Listo! Su cotización *${folio}* fue enviada a *${data.emailCliente}*.\n\n` +
+      `¡Gracias por preferirnos! Escriba *hola* si necesita algo más. 🙏`
     );
     if (esCanalWeb(phone) && pdfBase64) {
       // En la web además se puede descargar al tiro, sin esperar el correo
@@ -3728,13 +3784,13 @@ async function enviarCotizacionCompleta(phone, data) {
       `2️⃣ Pago contra factura (clientes con crédito aprobado)\n\n` +
       DATOS_BANCARIOS_WSP + `\n\n` +
       (esCanalWeb(phone)
-        ? `Cuando realices el pago, *envía el comprobante a caja@cintecsa.cl* indicando el folio *${folio}*, y nuestro equipo lo validará.`
-        : `Cuando realices el pago, *envía el comprobante por este mismo chat* 📎 indicando el folio *${folio}*, y nuestro equipo lo validará.`)
+        ? `Cuando realice el pago, *envíe el comprobante a caja@cintecsa.cl* indicando el folio *${folio}*, y nuestro equipo lo validará.`
+        : `Cuando realice el pago, *envíe el comprobante por este mismo chat* 📎 indicando el folio *${folio}*, y nuestro equipo lo validará.`)
     );
     console.log(`📧 Cotización enviada a ${data.emailCliente}`);
   } catch (err) {
     console.error("Error enviando cotización:", err.message);
-    await sendMessage(phone, `⚠️ Error al enviar cotización. Por favor intenta nuevamente.`);
+    await sendMessage(phone, `⚠️ Error al enviar cotización. Por favor intente nuevamente.`);
   }
 }
 
@@ -3823,8 +3879,8 @@ async function finalizarComprobante(phone, archivo, cot, noConfirmado = false) {
   });
 
   await sendMessage(phone,
-    `✅ *Recibimos tu comprobante de pago.*${folio ? `\n\nQuedó asociado a la cotización *${folio}*.` : ""}\n\n` +
-    `Nuestro equipo validará la transferencia y te confirmaremos a la brevedad por este medio. 🙏`
+    `✅ *Recibimos su comprobante de pago.*${folio ? `\n\nQuedó asociado a la cotización *${folio}*.` : ""}\n\n` +
+    `Nuestro equipo validará la transferencia y le confirmaremos a la brevedad por este medio. 🙏`
   );
   console.log(`💰 Comprobante recibido de +${phone} (${archivo.filename})${folio ? ` → ${folio}` : ""}`);
 }
@@ -3928,8 +3984,8 @@ async function manejarAudio(phone, msg) {
   if (!sessions[phone]) sessions[phone] = { step: STEPS.START, data: {} };
   registrarConversacionProblematica(phone, sessions[phone], "audio_sin_transcribir");
   await sendMessage(phone,
-    `🎤 Recibimos tu audio, pero no pudimos entenderlo automáticamente.\n\n` +
-    `¿Puedes escribirlo, por favor? Así te ayudo de inmediato. 🙏`
+    `🎤 Recibimos su audio, pero no pudimos entenderlo automáticamente.\n\n` +
+    `¿Puede escribirlo, por favor? Así le ayudo de inmediato. 🙏`
   );
 }
 
@@ -3996,8 +4052,8 @@ async function manejarImagen(phone, msg) {
   if (!sessions[phone]) sessions[phone] = { step: STEPS.START, data: {} };
   registrarConversacionProblematica(phone, sessions[phone], "foto_sin_identificar");
   await sendMessage(phone,
-    `📷 Recibimos tu foto, pero no pudimos identificar el producto automáticamente.\n\n` +
-    `¿Puedes contarnos el nombre o para qué lo usas? Así te ayudamos de inmediato. 🙏`
+    `📷 Recibimos su foto, pero no pudimos identificar el producto automáticamente.\n\n` +
+    `¿Puede contarnos el nombre o para qué lo usa? Así le ayudamos de inmediato. 🙏`
   );
 }
 
@@ -4027,12 +4083,12 @@ async function manejarComprobante(phone, msg) {
     if (candidatos.length > 1) {
       const opciones = candidatos.slice(0, 5);
       comprobantesPendientes.set(phone, { ...archivo, candidatos: opciones, sentAt: Date.now() });
-      let m = `📎 *Recibimos tu comprobante.*\n\n¿A cuál de tus cotizaciones corresponde este pago?\n\n`;
+      let m = `📎 *Recibimos su comprobante.*\n\n¿A cuál de sus cotizaciones corresponde este pago?\n\n`;
       opciones.forEach((c, i) => {
         const f = new Date(c.timestamp).toLocaleDateString("es-CL", { timeZone: "America/Santiago", day: "2-digit", month: "2-digit" });
         m += `*${i + 1}.* ${c.folio || c.id} — $${(c.total || 0).toLocaleString("es-CL")} _(${f})_\n`;
       });
-      m += `\nResponde con el *número* de la cotización.`;
+      m += `\nResponda con el *número* de la cotización.`;
       await sendMessage(phone, m);
       return;
     }
@@ -4041,7 +4097,7 @@ async function manejarComprobante(phone, msg) {
   } catch (err) {
     console.error("Error procesando comprobante:", err.response?.data || err.message);
     await sendMessage(phone,
-      `⚠️ No pudimos procesar el archivo. Intenta enviarlo nuevamente ` +
+      `⚠️ No pudimos procesar el archivo. Intente enviarlo nuevamente ` +
       `o mándalo por correo a *${DATOS_CONTACTO}*.`
     );
   }
@@ -4152,20 +4208,20 @@ function esHidrolavadora(nombre) {
 const HIDRO_PREGUNTAS = [
   { key: "agua",      msg: "💧 ¿La hidrolavadora usará *agua fría* o *agua caliente*?",
     valida: t => /fri|calient|ambas|las dos/.test(normalizar(t)),
-    error:  "Responde *agua fría* o *agua caliente*." },
+    error:  "Responda *agua fría* o *agua caliente*." },
   { key: "corriente", msg: "⚡ ¿Qué tipo de corriente eléctrica requiere?\n*1.* Monofásica (220V)\n*2.* Trifásica (380V)",
     valida: t => /^[12]$/.test(t.trim()) || /mono|trif|220|380|no se|no lo se/.test(normalizar(t)),
-    error:  "Responde *1* (Monofásica 220V) o *2* (Trifásica 380V)." },
-  { key: "bares",     msg: "🔧 ¿Qué presión necesita?\n_Indica en bares, ej: 100, 150, 200_",
+    error:  "Responda *1* (Monofásica 220V) o *2* (Trifásica 380V)." },
+  { key: "bares",     msg: "🔧 ¿Qué presión necesita?\n_Indique en bares, ej: 100, 150, 200_",
     valida: t => /\d/.test(t) || /no se|no lo se|cualquier/.test(normalizar(t)),
-    error:  "Indica la presión en *bares* con un número, ej: *150*. Si no la conoces, escribe *no sé*." },
-  { key: "caudal",    msg: "🌊 ¿Qué caudal necesita?\n_Indica en litros/minuto, ej: 10, 15, 20_",
+    error:  "Indique la presión en *bares* con un número, ej: *150*. Si no la conoce, escriba *no sé*." },
+  { key: "caudal",    msg: "🌊 ¿Qué caudal necesita?\n_Indique en litros/minuto, ej: 10, 15, 20_",
     valida: t => /\d/.test(t) || /no se|no lo se|cualquier/.test(normalizar(t)),
-    error:  "Indica el caudal en *litros/minuto* con un número, ej: *15*. Si no lo conoces, escribe *no sé*." },
-  { key: "modelo",    msg: "📋 ¿Tiene algún modelo de referencia?\n_Escribe marca y modelo, o *no* si no tiene_" },
+    error:  "Indique el caudal en *litros/minuto* con un número, ej: *15*. Si no lo conoce, escriba *no sé*." },
+  { key: "modelo",    msg: "📋 ¿Tiene algún modelo de referencia?\n_Escriba marca y modelo, o *no* si no tiene_" },
   { key: "horas",     msg: "⏱️ ¿Cuántas horas al día operará la hidrolavadora?",
     valida: t => /\d/.test(t) || /media|una|dos|tres|cuatro|cinco|seis|ocho|todo el dia|jornada/.test(normalizar(t)),
-    error:  "Indica cuántas *horas al día* operará, ej: *4*." },
+    error:  "Indique cuántas *horas al día* operará, ej: *4*." },
   { key: "uso",       msg: "🏭 ¿Para qué uso la destinará?\n_Ej: lavado de vehículos, maquinaria industrial, pisos_" },
 ];
 
@@ -4189,7 +4245,7 @@ async function iniciarFlujoHidro(phone, session) {
     session.step = STEPS.HIDRO_CANTIDAD;
     await sendMessage(phone,
       `🔩 ¡Perfecto! Las *hidrolavadoras* las cotiza directamente un especialista.\n\n` +
-      `¿*Cuántas unidades* necesitas cotizar?`
+      `¿*Cuántas unidades* necesita cotizar?`
     );
   }
 }
@@ -4200,13 +4256,13 @@ async function definirCantidadHidros(phone, session, cantidad) {
     session.data.hidrosMismasSpecs = true;
     session.step = STEPS.HIDRO_SPECS;
     await sendMessage(phone,
-      `🔩 Para cotizar tu *hidrolavadora* correctamente, necesito algunas especificaciones técnicas.\n\n` +
+      `🔩 Para cotizar su *hidrolavadora* correctamente, necesito algunas especificaciones técnicas.\n\n` +
       HIDRO_PREGUNTAS[0].msg
     );
   } else {
     session.step = STEPS.HIDRO_DISTINTAS;
     await sendMessage(phone,
-      `Las *${cantidad} hidrolavadoras* que necesitas, ¿tienen las *mismas características* o son *distintas*?\n\n` +
+      `Las *${cantidad} hidrolavadoras* que necesita, ¿tienen las *mismas características* o son *distintas*?\n\n` +
       `*1.* Todas iguales\n*2.* Distintas características`
     );
   }
@@ -4226,7 +4282,7 @@ async function manejarHidroCantidad(phone, session, text) {
     }
   }
   if (!cantidad || cantidad < 1 || cantidad > 50) {
-    await sendMessage(phone, `⚠️ Indícame la cantidad con un número, ej: *1*, *2*, *3*.\n\n¿Cuántas hidrolavadoras necesitas cotizar?`);
+    await sendMessage(phone, `⚠️ Indíqueme la cantidad con un número, ej: *1*, *2*, *3*.\n\n¿Cuántas hidrolavadoras necesita cotizar?`);
     return;
   }
   await definirCantidadHidros(phone, session, cantidad);
@@ -4237,14 +4293,14 @@ async function manejarHidroDistintas(phone, session, text) {
   const iguales   = /^1\.?$/.test(t.trim()) || /igual|misma|identic/.test(t);
   const distintas = /^2\.?$/.test(t.trim()) || /distint|diferent|varia/.test(t);
   if (iguales === distintas) {
-    await sendMessage(phone, `⚠️ Responde *1* si todas son iguales o *2* si tienen distintas características.`);
+    await sendMessage(phone, `⚠️ Responda *1* si todas son iguales o *2* si tienen distintas características.`);
     return;
   }
   session.data.hidrosMismasSpecs = iguales;
   session.step = STEPS.HIDRO_SPECS;
   const intro = iguales
-    ? `👍 Perfecto, te preguntaré las especificaciones *una sola vez* y aplicarán para las ${session.data.hidrosTotal} unidades.\n\n`
-    : `👍 Entendido, te preguntaré las especificaciones de *cada una*. Empecemos con la *hidrolavadora 1:*\n\n`;
+    ? `👍 Perfecto, le preguntaré las especificaciones *una sola vez* y aplicarán para las ${session.data.hidrosTotal} unidades.\n\n`
+    : `👍 Entendido, le preguntaré las especificaciones de *cada una*. Empecemos con la *hidrolavadora 1:*\n\n`;
   await sendMessage(phone, intro + HIDRO_PREGUNTAS[0].msg);
 }
 
@@ -4321,8 +4377,8 @@ async function finalizarFlujoHidro(phone, session) {
   hidroSolicitudes.set(phone, { sentAt: Date.now(), data: { ...session.data }, reminderCount: 0 });
   const n = session.data.hidrosTotal || 1;
   await sendMessage(phone,
-    `✅ ¡Listo! Registramos las especificaciones ${n > 1 ? `de tus *${n} hidrolavadoras*` : "de tu *hidrolavadora*"}.\n\n` +
-    `Tu solicitud fue derivada a un *especialista* que buscará las mejores opciones.\n\n` +
+    `✅ ¡Listo! Registramos las especificaciones ${n > 1 ? `de sus *${n} hidrolavadoras*` : "de su *hidrolavadora*"}.\n\n` +
+    `Su solicitud fue derivada a un *especialista* que buscará las mejores opciones.\n\n` +
     `Te notificaremos por este medio cuando tengamos la cotización. ⏳`
   );
   if (session.data.itemsPendientes.length > 0) {
@@ -4332,7 +4388,7 @@ async function finalizarFlujoHidro(phone, session) {
 
 async function manejarHidroEmail(phone, session, text) {
   if (!text.includes("@") || !text.includes(".")) {
-    await sendMessage(phone, `⚠️ Ingresa un correo electrónico válido.`);
+    await sendMessage(phone, `⚠️ Ingrese un correo electrónico válido.`);
     return;
   }
   const emailCliente = text.toLowerCase();
@@ -4350,9 +4406,9 @@ async function manejarHidroEmail(phone, session, text) {
         <p>Cualquier consulta, puede responder este correo o contactarnos por WhatsApp.</p>
         <p><em>Equipo CINTEC</em></p>`,
     });
-    await sendMessage(phone, `✅ La cotización fue enviada a *${emailCliente}*.\n\n¡Gracias por preferirnos! Escribe *hola* si necesitas algo más.`);
+    await sendMessage(phone, `✅ La cotización fue enviada a *${emailCliente}*.\n\n¡Gracias por preferirnos! Escriba *hola* si necesita algo más.`);
   } catch (err) {
-    await sendMessage(phone, `⚠️ No pude enviar el correo. Intenta nuevamente.`);
+    await sendMessage(phone, `⚠️ No pude enviar el correo. Intente nuevamente.`);
     console.error("Error enviando cotización hidro:", err.message);
     return;
   }
@@ -4452,7 +4508,24 @@ async function notificarInterno(phone, data) {
 }
 
 // ─── Enviar mensaje WhatsApp ──────────────────────────────────────────────────
+// Estilo del Asistente CINTEC: cercano y profesional, sin emojis. Se quitan aquí, en la
+// salida, para que no se escape ninguno (textos fijos ni lo que redacte la IA).
+const EMOJI = /[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{1F1E6}-\u{1F1FF}️‍⃣]/gu;
+function sinEmojis(texto) {
+  if (typeof texto !== "string") return texto;
+  return texto
+    .replace(new RegExp(`^([ \\t]*)(?:${EMOJI.source}|[ \\t])*${EMOJI.source}[ \\t]*`, "gmu"), "$1") // "👋 ¡Hola" → "¡Hola" (respeta sangría)
+    .replace(EMOJI, "")
+    .replace(/(\S)[ \t]+([,.;:!?])/g, "$1$2")   // "Entendido , esas" → "Entendido, esas"
+    .replace(/(^|\s)([_*])[ \t]+(?=\S)/gm, "$1$2") // "_ Usamos" → "_Usamos" (cursiva de WhatsApp)
+    .replace(/(\S)[ \t]{2,}(?=\S)/g, "$1 ")
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\(\s*\)/g, "")
+    .trim();
+}
+
 async function sendMessage(to, body) {
+  body = sinEmojis(body);
   // Canal web: no va a Meta, queda en la bandeja de salida que lee la burbuja
   if (esCanalWeb(to)) { encolarWeb(to, { tipo: "texto", texto: body }); return; }
   try {
@@ -4545,7 +4618,7 @@ function escapeHtml(str) {
 }
 
 app.get("/especialista/form", (req, res) => {
-  if (!checkHttpRateLimit(req.ip, 10)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (!checkHttpRateLimit(req.ip, 10)) return res.status(429).send("Demasiadas solicitudes. Intente en un minuto.");
   const { phone, nombre, token, hidros: hidrosB64, specs: specsB64 } = req.query;
   if (!phone || !token || token !== SPECIALIST_TOKEN) return res.status(401).send("No autorizado.");
 
@@ -4682,7 +4755,7 @@ app.get("/especialista/form", (req, res) => {
 });
 
 app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), async (req, res) => {
-  if (!checkHttpRateLimit(req.ip, 10)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (!checkHttpRateLimit(req.ip, 10)) return res.status(429).send("Demasiadas solicitudes. Intente en un minuto.");
   const { phone, token, modelo, precio_neto, precio_iva, caracteristicas, plazo, garantia, condiciones, observaciones } = req.body;
   if (!phone || !modelo || !precio_neto) return res.status(400).send("Faltan campos obligatorios.");
   if (token !== SPECIALIST_TOKEN) return res.status(401).send("Token inválido.");
@@ -4707,16 +4780,16 @@ app.post("/especialista/cotizacion", express.urlencoded({ extended: true }), asy
     session.data.hidroRespuesta = respuesta;
     session.step = STEPS.HIDRO_EMAIL;
     await sendMessage(phone,
-      `✅ ¡Tenemos la cotización de tu hidrolavadora!\n\n` +
-      `¿A qué *correo electrónico* te enviamos el detalle?`
+      `✅ ¡Tenemos la cotización de su hidrolavadora!\n\n` +
+      `¿A qué *correo electrónico* le enviamos el detalle?`
     );
   } else {
     // Sesión expiró — guardar en mapa y reiniciar sesión mínima
     hidroPendientes.set(phone, respuesta);
     sessions[phone] = { step: STEPS.HIDRO_EMAIL, data: { hidroRespuesta: respuesta, razonSocial: "Cliente" } };
     await sendMessage(phone,
-      `✅ ¡Tenemos la cotización de tu hidrolavadora!\n\n` +
-      `¿A qué *correo electrónico* te enviamos el detalle?`
+      `✅ ¡Tenemos la cotización de su hidrolavadora!\n\n` +
+      `¿A qué *correo electrónico* le enviamos el detalle?`
     );
   }
 
@@ -5299,9 +5372,9 @@ button:hover{background:#C0071B}
   ${error ? '<div class="err">⚠️ Usuario o contraseña incorrectos</div>' : ""}
   <form method="POST" action="/panel/login">
     <label for="u">Usuario</label>
-    <input type="text" id="u" name="user" placeholder="Tu usuario" autocomplete="username" required>
+    <input type="text" id="u" name="user" placeholder="Su usuario" autocomplete="username" required>
     <label for="p">Contraseña</label>
-    <input type="password" id="p" name="pass" placeholder="Tu contraseña" autocomplete="current-password" required>
+    <input type="password" id="p" name="pass" placeholder="Su contraseña" autocomplete="current-password" required>
     <button type="submit">Ingresar →</button>
   </form>
   <div class="foot">CINTEC · Acceso restringido al equipo interno</div>
@@ -5322,7 +5395,7 @@ app.post("/panel/login", express.urlencoded({ extended: false }), (req, res) => 
 });
 
 app.get("/panel", (req, res) => {
-  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intente en un minuto.");
   if (!getPanelSession(req)) return res.redirect("/panel/login");
   const nonce = crypto.randomBytes(16).toString("base64");
   res.setHeader("Content-Security-Policy",
@@ -5338,7 +5411,7 @@ app.get("/panel/logout", (req, res) => {
 
 // Exportar el registro de conversaciones a CSV (auditoría interna) — requiere login
 app.get("/panel/export", (req, res) => {
-  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intente en un minuto.");
   if (!getPanelSession(req)) return res.redirect("/panel/login");
 
   const consultas = cotizacionesLog.filter(e => e.tipo === "consulta");
@@ -5359,7 +5432,7 @@ app.get("/panel/export", (req, res) => {
 
 // Descargar el respaldo completo (JSON) ahora mismo — requiere login
 app.get("/panel/backup", (req, res) => {
-  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intenta en un minuto.");
+  if (!checkHttpRateLimit(req.ip, 30)) return res.status(429).send("Demasiadas solicitudes. Intente en un minuto.");
   if (!getPanelSession(req)) return res.redirect("/panel/login");
   const fecha = new Date().toISOString().slice(0, 10);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -5473,6 +5546,7 @@ function esCanalWeb(phone) { return typeof phone === "string" && phone.startsWit
 
 function encolarWeb(id, item) {
   const box = webOutbox.get(id) || { items: [], ts: 0 };
+  if (typeof item.texto === "string") item.texto = sinEmojis(item.texto);
   box.items.push(item);
   if (box.items.length > 50) box.items.splice(0, box.items.length - 50);
   box.ts = Date.now();
@@ -5530,13 +5604,13 @@ app.post("/api/web-chat", async (req, res) => {
   const texto = typeof text === "string" ? text.trim().slice(0, 1000) : "";
   if (!texto) return res.status(400).json({ error: "mensaje vacío" });
   const id = `web:${sessionId}`;
-  if (!checkRateLimit(id)) return res.status(429).json({ error: "Vas muy rápido 🙂 Espera unos segundos." });
+  if (!checkRateLimit(id)) return res.status(429).json({ error: "Está escribiendo muy rápido. Espere unos segundos." });
 
   // Mensajes de la misma sesión se procesan en orden, uno a la vez
   const previa = webColas.get(id) || Promise.resolve();
   const actual = previa.then(() => handleMessage(id, texto)).catch(err => {
     console.error("Error chat web:", err.message);
-    encolarWeb(id, { tipo: "texto", texto: "⚠️ Tuve un problema procesando tu mensaje. Intenta de nuevo o escribe *ejecutivo*." });
+    encolarWeb(id, { tipo: "texto", texto: "⚠️ Tuve un problema procesando su mensaje. Intente de nuevo o escriba *ejecutivo*." });
   });
   webColas.set(id, actual);
   await actual;
