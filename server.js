@@ -768,7 +768,7 @@ const CIERRE_POR_DEFECTO = "_Continuemos con tu cotización..._";
 const RESPUESTA_FUERA_DE_TEMA = "Solo puedo ayudarte con productos y cotizaciones de CINTEC 🙂";
 // Pregunta con la que a veces cierra la IA ("¿Necesitas más detalles? 😊"): se quita,
 // porque la siguiente pregunta la pone el bot. Solo si hay texto antes.
-const PREGUNTA_FINAL = /([.!)*\p{Extended_Pictographic}])\s*¿[^?]*\?[\s\p{Extended_Pictographic}️]*$/u;
+const PREGUNTA_FINAL = /(\S)\s*¿[^?¿]*\?[\s\p{Extended_Pictographic}️]*$/u;
 
 // Tras responder una consulta libre, se vuelve a formular la pregunta que el bot
 // dejó pendiente (en vez de un genérico "continuemos"), para que el cliente sepa qué responder.
@@ -1518,6 +1518,26 @@ async function handleMessage(phone, text) {
       if (porNecesidad) session.data.textoProductos = text.trim();
       const intencion = porNecesidad ? "cotizar" : detectarIntencionTexto(text);
       const saludo = `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n`;
+
+      // "¿tienes algún desengrasante de cocina?" como primer mensaje: ya está preguntando
+      // por un producto → se le responde la pregunta (con productos reales de la tienda)
+      // y se pasa directo a pedir el RUT para cotizarlo, sin el menú 1/2.
+      if (intencion !== "contacto" && !porNecesidad &&
+          (esUnaConsulta(text) || PREGUNTA_INFO.test(normalizar(text))) && catalogoWeb.mencionaProductoDeTienda(text)) {
+        if (!session.data.textoProductos) {
+          session.data.textoProductos = text.trim()
+            .replace(/^(hola[,!.]?\s*)?(buen[oa]s? (dias|tardes|noches)[,!.]?\s*)?/i, "")
+            .replace(/^¿?\s*(tienes|tienen|tiene|hay|venden|vende|manejan)\s+(alg[uú]n[oa]?s?\s+)?/i, "")
+            .replace(/[¿?]/g, "").trim();
+        }
+        session.step = STEPS.WAITING_RUT;
+        const pedirRut =
+          `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
+          `Para cotizarlo, si tienes *RUT de empresa*, ingrésalo.\nDe lo contrario, ingresa tu *RUT personal*.`;
+        await sendMessage(phone, `👋 ¡Hola! Bienvenido/a a *CINTEC*.`);
+        if (!(await responderConsulta(phone, session, text, pedirRut))) await sendMessage(phone, pedirRut);
+        break;
+      }
 
       if (intencion === "contacto") {
         session.step = STEPS.CONTACTO_NOMBRE;

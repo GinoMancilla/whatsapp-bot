@@ -203,6 +203,17 @@ function nombradoEn(texto) {
   return mejor;
 }
 
+// ¿El texto menciona un tipo de producto que la tienda vende? (raíz de ≥5 letras
+// presente en el nombre o la categoría: "desengrasante", "toallas", "jabon"...)
+function mencionaProductoDeTienda(texto) {
+  const raices = normalizar(texto).split(" ").filter(w => w.length > 4 && !VACIAS.has(w)).map(raiz).filter(r => r.length >= 5);
+  if (!raices.length) return false;
+  return productos.some(p => {
+    const nc = normalizar(p.nombre + " " + p.categoria);
+    return raices.some(r => nc.includes(r));
+  });
+}
+
 // Ficha técnica en PDF (base64) con caché en memoria — se baja solo cuando alguien pregunta
 const cachePdf = new Map();
 async function fichaPdfBase64(url) {
@@ -223,5 +234,5 @@ async function fichaPdfBase64(url) {
 
 function porSku(sku) { const k = skuClave(sku); return productos.find(p => skuClave(p.sku) === k) || null; }
 
-module.exports = { iniciar, refrescar, recomendar, candidatos, contexto, porSku, mencionados, nombradoEn, fichaPdfBase64, skuClave, extraerFicha,
+module.exports = { iniciar, refrescar, recomendar, candidatos, contexto, porSku, mencionados, nombradoEn, fichaPdfBase64, mencionaProductoDeTienda, skuClave, extraerFicha,
   get total() { return productos.length; } };
