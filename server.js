@@ -1485,7 +1485,9 @@ async function handleMessage(phone, text) {
   const pedidoPorNecesidad = !PREGUNTA_INFO.test(normalizar(text)) && (
     ([STEPS.WAITING_PRODUTOS, STEPS.WAITING_MAS].includes(session.step) && esPedidoPorNecesidad(text) && !text.includes("?")) ||
     (session.step === STEPS.WAITING_PRODUTOS && catalogoWeb.mencionaProductoDeTienda(text)));
-  if (stepsConversacionales.has(session.step) && esUnaConsulta(text) && !esCorreccionEnMas && !pedidoPorNecesidad) {
+  // "No me sirve" frente a opciones es un rechazo (lo maneja manejarEleccionOpcion), no una consulta
+  const rechazaOpciones = session.step === STEPS.ELIGIENDO_OPCION && NO_ME_SIRVE.test(normalizar(text));
+  if (stepsConversacionales.has(session.step) && esUnaConsulta(text) && !esCorreccionEnMas && !pedidoPorNecesidad && !rechazaOpciones) {
     const atendido = await responderConsulta(phone, session, text);
     if (atendido) return;
   }
