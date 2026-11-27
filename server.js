@@ -575,6 +575,7 @@ const STEPS = {
   ELIGIENDO_OPCION:   "eligiendo_opcion",
   WAITING_CANTIDAD:   "waiting_cantidad",
   WEB_CONTACTO:       "web_contacto",
+  DATOS_PREVIOS:      "datos_previos",
   WAITING_MAS:        "waiting_mas",
   WAITING_ENTREGA:    "waiting_entrega",
   WAITING_EMAIL:      "waiting_email",
@@ -789,6 +790,14 @@ function cierrePorPaso(session) {
       return `📦 ¿Qué productos necesitas cotizar?`;
     case STEPS.WAITING_ENTREGA:
       return `📦 ¿Cuál es la *dirección de entrega*? (calle, número, comuna y ciudad)`;
+    case STEPS.WAITING_RUT:
+      return `Para enviarte la cotización, ingresa tu *RUT* (o responde *sin rut*).`;
+    case STEPS.WAITING_RAZON:
+      return `¿Cuál es tu *nombre o razón social*?`;
+    case STEPS.WAITING_EMAIL:
+      return `📧 ¿A qué *correo electrónico* enviamos la cotización?`;
+    case STEPS.DATOS_PREVIOS:
+      return `¿Usamos tus datos de la última vez? Responde *sí* o *no*.`;
     default:
       return CIERRE_POR_DEFECTO;
   }
@@ -1304,6 +1313,23 @@ async function handleMessage(phone, text) {
     return;
   }
 
+  // ── "Ver pedido": lo que lleva hasta ahora, en cualquier momento ───────────
+  if (/^(ver (mi )?(pedido|carrito|carro)|mi (pedido|carrito|carro)|que llevo|que tengo en (el|mi) pedido|carrito|carro)\??$/.test(normalizar(text))) {
+    const conf = session.data.productosConfirmados || [];
+    const anot = session.data.productosNoEncontrados || [];
+    if (!conf.length && !anot.length) {
+      await sendMessage(phone, `🛒 Tu pedido está vacío por ahora.\n\n${cierrePorPaso(session) === CIERRE_POR_DEFECTO ? PREGUNTA_QUE_NECESITA : cierrePorPaso(session)}`);
+    } else {
+      await sendMessage(phone,
+        `🛒 *Tu pedido hasta ahora:*\n\n` +
+        conf.map((it, i) => `${i + 1}. ${it.seleccionado?.DesProd} — *${it.cantidad} ${it.unidad}*`).join("\n") +
+        (anot.length ? `\n\n📝 *Para cotizar a mano (precio a confirmar):*\n` + anot.map(n => `• ${n}`).join("\n") : "") +
+        `\n\n✏️ _Para cambiar algo dime, por ejemplo, "saca el cloro" o "que sean 3"._\n\n${cierrePorPaso(session)}`
+      );
+    }
+    return;
+  }
+
   // ── Confirmación: a qué cotización corresponde el comprobante enviado ──────
   const compPend = comprobantesPendientes.get(phone);
   if (compPend) {
@@ -1383,9 +1409,11 @@ async function handleMessage(phone, text) {
         `_Escribe *hola* si necesitas algo más._`
       );
     } else {
-      // Sin nombre aún: pedir nombre antes de notificar
+      // Sin nombre aún: pedir nombre antes de notificar (saludo si es su primer mensaje)
+      const esPrimerMensaje = session.step === STEPS.START;
       session.step = STEPS.CONTACTO_NOMBRE;
       await sendMessage(phone,
+        (esPrimerMensaje ? `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` : "") +
         `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n` +
         `¿Cuál es tu *nombre* para informarle?`
       );
@@ -1451,8 +1479,10 @@ async function handleMessage(phone, text) {
   // Si le preguntamos qué productos necesita y describe un uso ("algo para sacar grasa
   // de la cocina"), es un pedido: va a la búsqueda por necesidad (opciones para cotizar),
   // no a la conversación libre.
-  const pedidoPorNecesidad = [STEPS.WAITING_PRODUTOS, STEPS.WAITING_MAS].includes(session.step) &&
-    esPedidoPorNecesidad(text) && !text.includes("?") && !PREGUNTA_INFO.test(normalizar(text));
+  // Igual con "¿tienen cloro gel?" cuando se le preguntó qué necesita: se buscan opciones.
+  const pedidoPorNecesidad = !PREGUNTA_INFO.test(normalizar(text)) && (
+    ([STEPS.WAITING_PRODUTOS, STEPS.WAITING_MAS].includes(session.step) && esPedidoPorNecesidad(text) && !text.includes("?")) ||
+    (session.step === STEPS.WAITING_PRODUTOS && catalogoWeb.mencionaProductoDeTienda(text)));
   if (stepsConversacionales.has(session.step) && esUnaConsulta(text) && !esCorreccionEnMas && !pedidoPorNecesidad) {
     const atendido = await responderConsulta(phone, session, text);
     if (atendido) return;
@@ -1464,19 +1494,16 @@ async function handleMessage(phone, text) {
       // El botón "Consultar por WhatsApp" de cintecsa.cl manda el nombre del
       // producto en el propio mensaje — si ya nos dijo qué quiere, no se lo
       // volvemos a preguntar: vamos directo a pedir el RUT para cotizar.
+      const prevSaludo = datosPrevios(phone);
+      const saludoInicial = prevSaludo
+        ? `👋 ¡Hola de nuevo, *${prevSaludo.razonSocial}*! Qué gusto saludarte otra vez.`
+        : `👋 ¡Hola! Bienvenido/a a *CINTEC*.`;
       const productoDesdeLink = extraerProductoDeLink(text);
       if (productoDesdeLink) {
-        session.data.productoDesdeLink = productoDesdeLink;
-        await sendMessage(phone,
-          `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
-          `Vi que te interesa *${productoDesdeLink}* 📦 — ¡vamos a cotizarlo!\n\n` +
-          `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
-          `Si tienes *RUT de empresa*, ingrésalo.\n` +
-          `De lo contrario, ingresa tu *RUT personal*.\n\n` +
-          `_Ej empresa: 76.123.456-7_\n` +
-          `_Ej personal: 12.345.678-9_`
-        );
-        session.step = STEPS.WAITING_RUT;
+        session.data.textoProductos = productoDesdeLink;
+        await sendMessage(phone, `${saludoInicial}\n\nVi que te interesa *${productoDesdeLink}* 📦 — ¡vamos a cotizarlo!`);
+        session.step = STEPS.WAITING_PRODUTOS;
+        await procesarProductos(phone, session);
         break;
       }
 
@@ -1506,74 +1533,47 @@ async function handleMessage(phone, text) {
         session.data.rutSinDV = soloDigitos;
         session.data.esperandoRutPersonal = parseInt(soloDigitos, 10) < 50000000;
         await sendMessage(phone,
-          `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n` +
-          `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
+          `${saludoInicial}\n\n${AVISO_DATOS}\n\n` +
           `✅ RUT registrado: *${soloDigitos}-${rutLimpio.slice(-1)}*`
         );
         await avanzarFlujoCotizacion(phone, session);
         break;
       }
 
-      // El cliente puede traer la intención ya clara desde el primer mensaje
-      // (ej. "hola necesito cotizar lavaloza" o "hola vi un producto en la
-      // página") — si es así, no mostramos el menú genérico 1/2: respondemos
-      // directo a lo que pidió, con el mismo saludo de bienvenida primero.
-      // "algo para sacar grasa de la cocina" como primer mensaje = quiere cotizar eso
-      const porNecesidad = esPedidoPorNecesidad(text) && detectarIntencionTexto(text) !== "contacto";
-      if (porNecesidad) session.data.textoProductos = text.trim();
-      const intencion = porNecesidad ? "cotizar" : detectarIntencionTexto(text);
-      const saludo = `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n`;
+      // Nuevo orden: sin menú 1/2. Saludo y, según lo que traiga el primer mensaje:
+      // ejecutivo → contacto; pregunta sobre un producto → se responde con su ficha;
+      // ya dice qué quiere → se busca de inmediato; si no → "¿qué necesitas?".
+      const tInicial = normalizar(text);
+      const intencion = detectarIntencionTexto(text);
+      const nombraProducto = catalogoWeb.mencionaProductoDeTienda(text) || esPedidoPorNecesidad(text);
+      const pideEjecutivo = /hablar|ejecutivo|asesor|vendedor|persona real|reclamo|queja|factura|boleta|llamar|me llamen/.test(tInicial);
 
-      // "¿tienes algún desengrasante de cocina?" como primer mensaje: ya está preguntando
-      // por un producto → se le responde la pregunta (con productos reales de la tienda)
-      // y se pasa directo a pedir el RUT para cotizarlo, sin el menú 1/2.
-      if (intencion !== "contacto" && !porNecesidad &&
-          (esUnaConsulta(text) || PREGUNTA_INFO.test(normalizar(text))) && catalogoWeb.mencionaProductoDeTienda(text)) {
-        if (!session.data.textoProductos) {
-          session.data.textoProductos = text.trim()
-            .replace(/^(hola[,!.]?\s*)?(buen[oa]s? (dias|tardes|noches)[,!.]?\s*)?/i, "")
-            .replace(/^¿?\s*(tienes|tienen|tiene|hay|venden|vende|manejan)\s+(alg[uú]n[oa]?s?\s+)?/i, "")
-            .replace(/[¿?]/g, "").trim();
-        }
-        session.step = STEPS.WAITING_RUT;
-        const pedirRut =
-          `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
-          `Para cotizarlo, si tienes *RUT de empresa*, ingrésalo.\nDe lo contrario, ingresa tu *RUT personal*.`;
-        await sendMessage(phone, `👋 ¡Hola! Bienvenido/a a *CINTEC*.`);
-        if (!(await responderConsulta(phone, session, text, pedirRut))) await sendMessage(phone, pedirRut);
-        break;
-      }
-
-      if (intencion === "contacto") {
+      if (pideEjecutivo || (intencion === "contacto" && !nombraProducto)) {
         session.step = STEPS.CONTACTO_NOMBRE;
-        await sendMessage(phone, saludo +
+        await sendMessage(phone, `${saludoInicial}\n\n` +
           `👤 Con gusto te conectamos con un *ejecutivo de CINTEC*.\n\n¿Cuál es tu *nombre* para informarle?`
         );
         break;
       }
-      if (intencion === "producto_vago") {
-        session.step = STEPS.ESPERANDO_PRODUCTO;
-        await sendMessage(phone, saludo +
-          `📦 ¡Claro! ¿Qué producto te interesa?\n\nCuéntame el nombre, o pégame el link de la página.`
-        );
-        break;
+
+      session.step = STEPS.WAITING_PRODUTOS;
+      // "¿el suma plaq sirve para hornos?" → respuesta con la ficha técnica
+      const fichaNombrada = PREGUNTA_INFO.test(tInicial) ? catalogoWeb.nombradoEn(text) : null;
+      if (fichaNombrada) {
+        await sendMessage(phone, saludoInicial);
+        if (await responderSobreProducto(phone, session, text, fichaNombrada)) break;
       }
-      if (intencion === "cotizar") {
-        session.step = STEPS.WAITING_RUT;
-        await sendMessage(phone, saludo +
-          `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
-          `Si tienes *RUT de empresa*, ingrésalo.\nDe lo contrario, ingresa tu *RUT personal*.\n\n_Ej empresa: 76.123.456-7_\n_Ej personal: 12.345.678-9_`
-        );
+
+      const productosIniciales = session.data.textoProductos || (nombraProducto ? limpiarPedidoInicial(text) : null);
+      if (productosIniciales) {
+        session.data.textoProductos = productosIniciales;
+        if (!fichaNombrada) await sendMessage(phone, saludoInicial);
+        await sendMessage(phone, `🔍 Buscando *${productosIniciales}* en nuestro catálogo...`);
+        await procesarProductos(phone, session);
         break;
       }
 
-      await sendMessage(phone, saludo +
-        `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._\n\n` +
-        `¿En qué te podemos ayudar hoy?\n\n` +
-        `*1.* 📦 Cotizar productos\n` +
-        `*2.* 👤 Contactar con un ejecutivo`
-      );
-      session.step = STEPS.MENU_INICIO;
+      await sendMessage(phone, `${saludoInicial}\n\n${PREGUNTA_QUE_NECESITA}`);
       break;
     }
 
@@ -1596,15 +1596,10 @@ async function handleMessage(phone, text) {
         await sendMessage(phone, `📦 Cuéntame el nombre del producto, o pégame el link de la página.`);
         break;
       }
-      session.data.productoDesdeLink = producto;
-      await sendMessage(phone,
-        `¡Perfecto, *${producto}*! Para cotizarte necesito algunos datos.\n\n` +
-        `Si tienes *RUT de empresa*, ingrésalo.\n` +
-        `De lo contrario, ingresa tu *RUT personal*.\n\n` +
-        `_Ej empresa: 76.123.456-7_\n` +
-        `_Ej personal: 12.345.678-9_`
-      );
-      session.step = STEPS.WAITING_RUT;
+      session.data.textoProductos = producto;
+      session.step = STEPS.WAITING_PRODUTOS;
+      await sendMessage(phone, `🔍 Buscando *${producto}* en nuestro catálogo...`);
+      await procesarProductos(phone, session);
       break;
     }
 
@@ -1621,8 +1616,8 @@ async function handleMessage(phone, text) {
       // Detectar negativa a entregar el RUT
       const rechazaRut = /^no\.?$/.test(tNormRut) ||
         /no quiero|no lo tengo|no tengo rut|no me lo se|no lo se|prefiero no|para que|por que lo (piden|necesitan)|sin rut|no dar|no entregar|no compartir|es (necesario|obligatorio)/.test(tNormRut);
-      const aceptaSinRut = session.data.ofrecioSinRut &&
-        /^(si|s|ok|dale|bueno|ya|continuar|continuemos|sigamos|sin rut)\.?$/.test(tNormRut);
+      const aceptaSinRut = /^sin rut\.?$/.test(tNormRut) || (session.data.ofrecioSinRut &&
+        /^(si|s|ok|dale|bueno|ya|continuar|continuemos|sigamos|sin rut)\.?$/.test(tNormRut));
 
       if (aceptaSinRut || (rechazaRut && session.data.ofrecioSinRut)) {
         // Cliente insiste o acepta → continuar sin RUT como cliente nuevo (precio lista)
@@ -1630,6 +1625,7 @@ async function handleMessage(phone, text) {
         session.data.rutLimpio = "";
         session.data.rutSinDV  = null; // null no matchea historial → precio lista
         session.data.sinRut    = true;
+        session.data.esClienteNuevo = true;
         await sendMessage(phone, `👍 Sin problema, te cotizaré con *precio lista*.`);
         await avanzarFlujoCotizacion(phone, session);
         break;
@@ -1651,7 +1647,7 @@ async function handleMessage(phone, text) {
           : "";
         await sendMessage(phone,
           reencauce +
-          `Para comenzar necesito tu RUT. 😊\n\n` +
+          `Para enviarte la cotización necesito tu RUT. 😊\n\n` +
           `Si tienes *RUT de empresa*, ingrésalo.\n` +
           `De lo contrario, ingresa tu *RUT personal*.\n\n` +
           `_Ej empresa: 76.123.456-7_\n` +
@@ -1681,6 +1677,8 @@ async function handleMessage(phone, text) {
       session.data.rutLimpio        = rutLimpio;
       session.data.rutSinDV         = soloDigitos;
       session.data.esperandoRutPersonal = !esEmpresa;
+      // Si el pedido ya está armado, aplicar los precios preferenciales de su historial
+      if (session.data.pedidoListo) aplicarPreciosCliente(session);
       await sendMessage(phone, `✅ RUT registrado.`);
       await avanzarFlujoCotizacion(phone, session);
       break;
@@ -1696,15 +1694,51 @@ async function handleMessage(phone, text) {
         break;
       }
       session.data.razonSocial = text;
-      // Si ya sabíamos qué producto quiere (del link de la web, o de un mensaje
-      // anterior donde ya lo dijo), no preguntamos de nuevo.
+      if (session.data.hidroPendienteNombre) {
+        // Pedido de hidrolavadora esperando el nombre para enviarlo al especialista
+        session.data.hidroPendienteNombre = false;
+        await finalizarFlujoHidro(phone, session);
+        break;
+      }
       await avanzarFlujoCotizacion(phone, session);
       break;
     }
 
+    case STEPS.DATOS_PREVIOS: {
+      const tPrev = normalizar(text);
+      const prev = session.data.datosPreviosOfrecidos;
+      if (/^(si|sí|s|ok|dale|ya|correcto|claro|bueno|esos|los mismos)\b/.test(tPrev) && prev) {
+        Object.assign(session.data, {
+          razonSocial: prev.razonSocial, emailCliente: prev.emailCliente,
+          direccionEntrega: prev.direccionEntrega || session.data.direccionEntrega,
+          requiereFlete: prev.direccionEntrega ? !!prev.requiereFlete : session.data.requiereFlete,
+        });
+        if (prev.rut) {
+          const r = normalizarRUT(prev.rut);
+          Object.assign(session.data, { rut: r, rutLimpio: r, rutSinDV: r.slice(0, -1) });
+          aplicarPreciosCliente(session);
+        } else {
+          session.data.sinRut = true;
+          session.data.esClienteNuevo = true;
+        }
+        await sendMessage(phone, `✅ Perfecto, uso tus datos de la última vez.`);
+        await avanzarDatos(phone, session);
+        break;
+      }
+      if (/^(no|n|otros|cambiar|distintos)\b/.test(tPrev)) {
+        await avanzarDatos(phone, session); // ya ofrecido → sigue pidiendo RUT, nombre…
+        break;
+      }
+      // Escribió directamente un RUT u otro dato: se toma como "no" y se procesa
+      session.step = STEPS.WAITING_RUT;
+      await handleMessage(phone, text);
+      return;
+    }
+
     case STEPS.WAITING_PRODUTOS:
       if (text.length < 3) { await sendMessage(phone, `⚠️ Describe los productos que necesitas.`); break; }
-      session.data.textoProductos = text;
+      // Botón "Cotizar este producto" / "Consultar por WhatsApp" de la tienda, o "¿tienen cloro gel?"
+      session.data.textoProductos = extraerProductoDeLink(text) || limpiarPedidoInicial(text);
       await sendMessage(phone, `🔍 Buscando en nuestro catálogo...`);
       await procesarProductos(phone, session);
       break;
@@ -1733,7 +1767,7 @@ async function handleMessage(phone, text) {
         break;
       }
       session.data.contactoWeb = correo ? correo[0] : `+${fono}`;
-      await mostrarResumenFinal(phone, session);
+      await avanzarDatos(phone, session);
       break;
     }
 
@@ -1768,17 +1802,14 @@ async function handleMessage(phone, text) {
       session.data.direccionEntrega = session.data.comunaEntrega && clasificarZonaEntrega(text) === "desconocida"
         ? `${text}, ${session.data.comunaEntrega}` : text;
       session.data.requiereFlete = clasificarZonaEntrega(session.data.direccionEntrega) === "fuera";
-      session.step = STEPS.WAITING_EMAIL;
       if (session.data.requiereFlete) {
         await sendMessage(phone,
           `ℹ️ En esa comuna *no realizamos entregas directas*.\n\n` +
           `Tu pedido se despacha por *flete externo* y su valor se cotiza por separado — ` +
-          `un ejecutivo te confirmará el costo del envío. 🚚\n\n` +
-          `📧 ¿A qué *correo electrónico* enviamos la cotización?`
+          `un ejecutivo te confirmará el costo del envío. 🚚`
         );
-      } else {
-        await sendMessage(phone, `📧 ¿A qué *correo electrónico* enviamos la cotización?`);
       }
+      await avanzarDatos(phone, session); // siguiente dato que falte (correo) o envío
       break;
 
     case STEPS.WAITING_EMAIL:
@@ -1790,10 +1821,8 @@ async function handleMessage(phone, text) {
         await sendMessage(phone, reencauceMail + `📧 Ingresa un *correo electrónico válido* para enviarte la cotización.`);
         break;
       }
-      session.data.emailCliente = text.toLowerCase();
-      await enviarCotizacionCompleta(phone, session.data);
-      session.step = STEPS.DONE;
-      setTimeout(() => delete sessions[phone], 5 * 60 * 1000);
+      session.data.emailCliente = (text.match(/[^\s@]+@[^\s@]+\.[^\s@]+/) || [text])[0].toLowerCase();
+      await avanzarDatos(phone, session); // con todos los datos → envía la cotización
       break;
 
     case STEPS.HIDRO_CANTIDAD:
@@ -1886,31 +1915,12 @@ async function manejarMenuInicio(phone, session, text) {
     }
   };
 
-  if (esCotizacion) {
-    await guardarProductoMencionado();
-    session.step = STEPS.WAITING_RUT;
-    await sendMessage(phone,
-      `📦 ¡Perfecto! Para cotizarte necesito algunos datos.\n\n` +
-      `Si tienes *RUT de empresa*, ingrésalo.\n` +
-      `De lo contrario, ingresa tu *RUT personal*.\n\n` +
-      `_Ej empresa: 76.123.456-7_\n` +
-      `_Ej personal: 12.345.678-9_`
-    );
-    return;
-  }
-
-  // Las regex no reconocieron el mensaje → clasificar intención con Claude
-  const intencion = await clasificarIntencion(text);
+  // (Menú antiguo: solo lo ven sesiones que empezaron antes del cambio de orden.)
+  // Cotizar → directo a los productos; los datos se piden al final.
+  const intencion = esCotizacion ? "cotizar" : await clasificarIntencion(text);
   if (intencion === "cotizar") {
     await guardarProductoMencionado();
-    session.step = STEPS.WAITING_RUT;
-    await sendMessage(phone,
-      `📦 ¡Perfecto! Para cotizarte necesito algunos datos.\n\n` +
-      `Si tienes *RUT de empresa*, ingrésalo.\n` +
-      `De lo contrario, ingresa tu *RUT personal*.\n\n` +
-      `_Ej empresa: 76.123.456-7_\n` +
-      `_Ej personal: 12.345.678-9_`
-    );
+    await avanzarFlujoCotizacion(phone, session);
     return;
   }
   if (intencion === "contacto") {
@@ -1968,25 +1978,151 @@ async function extraerDatosIniciales(text) {
 // tanto apenas se registra el RUT como despues de cada paso siguiente, para no
 // preguntar lo que el cliente ya dijo en un mensaje anterior (ej. en el primer
 // audio, antes de que le pidieramos el RUT).
+// Orden de la conversación (desde 2026-11-27): saludo → ¿qué necesitas? → productos y
+// cantidades → resumen → recién ahí los datos (RUT, nombre, dirección, correo).
+// Mientras el pedido no está listo, avanza a los productos; cuando ya lo está, a los datos.
 async function avanzarFlujoCotizacion(phone, session) {
-  if (!session.data.razonSocial) {
-    session.step = STEPS.WAITING_RAZON;
-    await sendMessage(phone, `¿Cuál es tu *nombre o razón social*?`);
-    return;
-  }
+  if (session.data.pedidoListo) return avanzarDatos(phone, session);
   const productos = session.data.textoProductos || session.data.productoDesdeLink;
   if (!productos) {
     session.step = STEPS.WAITING_PRODUTOS;
-    await sendMessage(phone,
-      `✅ Registrado.\n\n📦 ¿Qué productos necesitas cotizar?\n\n` +
-      `_Indica productos con cantidades:_\n_"lavaloza 10 unidades, toalla 2 paquetes"_`
-    );
+    await sendMessage(phone, PREGUNTA_QUE_NECESITA);
     return;
   }
   session.data.textoProductos = productos;
   session.step = STEPS.WAITING_PRODUTOS;
-  await sendMessage(phone, `✅ Registrado.\n\n🔍 Buscando *${productos}* en nuestro catálogo...`);
+  await sendMessage(phone, `🔍 Buscando *${productos}* en nuestro catálogo...`);
   await procesarProductos(phone, session);
+}
+
+const PREGUNTA_QUE_NECESITA =
+  `📦 ¿Qué necesitas cotizar hoy?\n\n` +
+  `Puedes escribirme el producto y la cantidad (_"lavaloza 10 unidades, toalla 2 paquetes"_), ` +
+  `contarme para qué lo necesitas o pegar el link de la página.\n\n` +
+  `_Si prefieres hablar con un ejecutivo, escríbelo._`;
+
+const AVISO_DATOS =
+  `🔒 _Para cotizarte guardamos tu RUT, nombre, contacto y dirección con el único fin de procesar tu cotización y despacho. ` +
+  `Escribe *datos* cuando quieras acceder, corregir o eliminar tu información._`;
+
+// "111111111" → "11.111.111-1"
+function formatearRut(rut) {
+  const r = normalizarRUT(String(rut || ""));
+  if (r.length < 2) return rut;
+  return r.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "-" + r.slice(-1);
+}
+
+// Datos de la última cotización de este número (solo WhatsApp: en la web no hay número fijo)
+function datosPrevios(phone) {
+  if (esCanalWeb(phone)) return null;
+  const c = [...cotizacionesLog].reverse().find(e => e.tipo === "cotizacion" && e.phone === phone && e.razonSocial && e.emailCliente);
+  return c ? { rut: c.rut, razonSocial: c.razonSocial, emailCliente: c.emailCliente,
+    direccionEntrega: c.direccionEntrega, requiereFlete: c.requiereFlete } : null;
+}
+
+// Con el RUT recién conocido (al final), se aplican los precios del historial del cliente
+// a los productos que ya eligió del catálogo general.
+function aplicarPreciosCliente(session) {
+  const rows = session.data.rows || csvCache.rows;
+  const rutSinDV = session.data.rutSinDV;
+  if (!rows || !rutSinDV) { session.data.esClienteNuevo = true; return; }
+  const filasCliente = rows.filter(r => (r["CodAuxGSaen"] || "").replace(/[.\-\s]/g, "") === rutSinDV);
+  session.data.esClienteNuevo = filasCliente.length === 0;
+  if (session.data.esClienteNuevo) return;
+  const haceSeisMeses = new Date(); haceSeisMeses.setMonth(haceSeisMeses.getMonth() - 6);
+  for (const item of session.data.productosConfirmados || []) {
+    const fila = filasCliente.find(r => r.CodProd === item.seleccionado?.CodProd);
+    if (!fila) continue;
+    const precio = parsearPrecio(fila["Ultimo Precio"]);
+    const costo  = parsearPrecio(fila["Costo Vta"]);
+    const p = (fila["Fecha Ult. Vta"] || "").split("/");
+    const fecha = p.length === 3 ? new Date(`${p[2]}-${p[1].padStart(2, "0")}-${p[0].padStart(2, "0")}`) : new Date(0);
+    if (precio > 0 && (precio - costo) / precio >= 0.20 && fecha >= haceSeisMeses) {
+      item.seleccionado.precio = precio;          // precio preferencial del cliente
+      item.seleccionado.fecha  = fila["Fecha Ult. Vta"];
+      item.esClienteNuevo = false;
+    }
+  }
+}
+
+async function pedirRut(phone, session) {
+  session.step = STEPS.WAITING_RUT;
+  await sendMessage(phone,
+    `${AVISO_DATOS}\n\n` +
+    `Para enviarte la cotización necesito algunos datos. Si tienes *RUT de empresa*, ingrésalo; ` +
+    `de lo contrario, tu *RUT personal*.\n\n_Ej empresa: 76.123.456-7 · Ej personal: 12.345.678-9_\n` +
+    `_Si prefieres no darlo, responde *sin rut* y te cotizo con precio lista._`
+  );
+}
+
+// Pide el siguiente dato que falte y, cuando están todos, cierra (envía la cotización
+// o, si solo hay productos "precio a confirmar", deja la solicitud al ejecutivo).
+async function avanzarDatos(phone, session) {
+  const d = session.data;
+  // Cliente que vuelve: ofrecer los datos de su última cotización (una sola vez)
+  if (!d.ofrecioDatosPrevios && !d.rut && !d.sinRut && !d.razonSocial) {
+    d.ofrecioDatosPrevios = true;
+    const prev = datosPrevios(phone);
+    if (prev) {
+      d.datosPreviosOfrecidos = prev;
+      session.step = STEPS.DATOS_PREVIOS;
+      await sendMessage(phone,
+        `¿Usamos tus datos de la última vez?\n\n` +
+        `👤 *${prev.razonSocial}*${prev.rut ? ` (RUT ${formatearRut(prev.rut)})` : ""}\n` +
+        (d.soloEjecutivo ? "" : `🚚 ${prev.direccionEntrega || "—"}\n`) +
+        `📧 ${prev.emailCliente}\n\n` +
+        `Responde *sí* para continuar con estos datos, o *no* para ingresarlos de nuevo.`
+      );
+      return;
+    }
+  }
+  if (!d.rut && !d.sinRut) return pedirRut(phone, session);
+  if (!d.razonSocial) {
+    session.step = STEPS.WAITING_RAZON;
+    await sendMessage(phone, `¿Cuál es tu *nombre o razón social*?`);
+    return;
+  }
+  if (d.soloEjecutivo) {
+    // Solo productos "precio a confirmar": el ejecutivo cotiza a mano
+    if (esCanalWeb(phone) && !d.contactoWeb && !d.emailCliente) {
+      session.step = STEPS.WEB_CONTACTO;
+      await sendMessage(phone, `📧 Para que el ejecutivo te envíe la cotización, ¿a qué *correo o teléfono* te contactamos?`);
+      return;
+    }
+    if (!d.contactoWeb && d.emailCliente) d.contactoWeb = d.emailCliente;
+    session.step = STEPS.DONE;
+    await sendMessage(phone,
+      `📋 *Tu solicitud quedó registrada:*\n\n` + (d.productosNoEncontrados || []).map(n => `• ${n}`).join("\n") +
+      `\n\n👤 Un *ejecutivo de CINTEC* te enviará la cotización con precios a la brevedad.\n\n_Escribe *hola* si necesitas algo más._`
+    );
+    await notificarInterno(phone, d);
+    return;
+  }
+  if (!d.direccionEntrega) {
+    session.step = STEPS.WAITING_ENTREGA;
+    await sendMessage(phone, d.comunaEntrega
+      ? `📦 Anoté despacho a *${d.comunaEntrega}*. ¿Cuál es la *calle y número*?`
+      : `📦 ¿Cuál es la *dirección de entrega*? (calle, número, comuna y ciudad)`);
+    return;
+  }
+  if (!d.emailCliente) {
+    session.step = STEPS.WAITING_EMAIL;
+    await sendMessage(phone, `📧 ¿A qué *correo electrónico* enviamos la cotización?`);
+    return;
+  }
+  // Todo listo → enviar la cotización
+  await enviarCotizacionCompleta(phone, d);
+  session.step = STEPS.DONE;
+  const clave = phone;
+  setTimeout(() => delete sessions[clave], 5 * 60 * 1000);
+}
+
+// "Hola, ¿tienen algún desengrasante de cocina?" → "desengrasante de cocina"
+function limpiarPedidoInicial(text) {
+  return text.trim()
+    .replace(/^(hola|buen[oa]s?( (dias|tardes|noches))?|hey|alo)[,!.\s]*/i, "")
+    .replace(/^¿?\s*(tienes|tienen|tiene|hay|venden|vende|manejan|necesito|quiero|busco|quisiera|me gustaria)\s+(cotizar\s+)?(alg[uú]n[oa]?s?\s+|un[oa]?s?\s+)?/i, "")
+    .replace(/[¿?]/g, "").trim() || text.trim();
 }
 
 // Clasifica un mensaje ambiguo del menú inicial en: cotizar | contacto | ninguno.
@@ -2027,14 +2163,7 @@ async function manejarContactoNombre(phone, session, text) {
   if (text.trim().split(/\s+/).length > 4 && detectarIntencionTexto(text) === "cotizar") {
     const extraidos = await extraerDatosIniciales(text);
     session.data.textoProductos = extraidos?.productos || text.trim();
-    session.step = STEPS.WAITING_RUT;
-    await sendMessage(phone,
-      `📦 ¡Perfecto! Para cotizarte necesito algunos datos.\n\n` +
-      `Si tienes *RUT de empresa*, ingrésalo.\n` +
-      `De lo contrario, ingresa tu *RUT personal*.\n\n` +
-      `_Ej empresa: 76.123.456-7_\n` +
-      `_Ej personal: 12.345.678-9_`
-    );
+    await avanzarFlujoCotizacion(phone, session); // productos primero, datos al final
     return;
   }
   session.data.nombreContacto = text;
@@ -2832,25 +2961,17 @@ async function mostrarResumenFinal(phone, session) {
   const noEncontrados = session.data.productosNoEncontrados || [];
 
   if (confirmados.length === 0) {
-    // Si ya se avisó "No encontré X… un representante revisará", no repetir un segundo aviso equivalente
     if (noEncontrados.length === 0) {
-      await sendMessage(phone,
-        `ℹ️ No hay productos para cotizar.\nUn representante te contactará a la brevedad.`
-      );
-    } else if (session.data.haySinPrecio && esCanalWeb(phone) && !session.data.contactoWeb) {
-      // En la web no tenemos su WhatsApp: pedir cómo contactarlo antes de cerrar
-      session.step = STEPS.WEB_CONTACTO;
-      await sendMessage(phone, `📧 Para que el ejecutivo te envíe la cotización, ¿a qué *correo o teléfono* te contactamos?`);
+      // Nada que cotizar todavía: seguir en "¿qué necesitas?" en vez de cerrar
+      session.step = STEPS.WAITING_PRODUTOS;
+      await sendMessage(phone, `ℹ️ Aún no hay productos en tu pedido.\n\n${PREGUNTA_QUE_NECESITA}`);
       return;
-    } else if (session.data.haySinPrecio) {
-      // Eligió productos de la tienda sin precio automático: cerrar diciendo qué pasa ahora
-      await sendMessage(phone,
-        `📋 *Tu solicitud quedó registrada:*\n\n` + noEncontrados.map(n => `• ${n}`).join("\n") +
-        `\n\n👤 Un *ejecutivo de CINTEC* te enviará la cotización con precios a la brevedad.\n\n_Escribe *hola* si necesitas algo más._`
-      );
     }
-    session.step = STEPS.DONE;
-    await notificarInterno(phone, session.data);
+    // Solo productos para cotizar a mano (sin precio automático / no encontrados):
+    // se piden los datos y el ejecutivo arma la cotización
+    session.data.pedidoListo = true;
+    session.data.soloEjecutivo = true;
+    await avanzarDatos(phone, session);
     return;
   }
 
@@ -2862,11 +2983,14 @@ async function mostrarResumenFinal(phone, session) {
     msg += `   📦 Cantidad: ${item.cantidad} ${item.unidad}\n\n`;
   });
 
-  const condicionPago = session.data.esClienteNuevo ? "Contado" : "30 días";
   msg += `📧 Los *precios y el total* van incluidos en la cotización que enviaremos a tu correo.\n\n`;
   msg += `🕒 *Vigencia de precios:* 72 horas\n`;
   msg += `🚚 *Despacho:* Puerto Montt\n`;
-  msg += `💳 *Condición de pago:* ${condicionPago}\n\n`;
+  // La condición de pago depende de si es cliente con historial: solo se sabe con el RUT
+  if (session.data.rut || session.data.sinRut) {
+    msg += `💳 *Condición de pago:* ${session.data.esClienteNuevo ? "Contado" : "30 días"}\n`;
+  }
+  msg += `\n`;
 
   if (bajoMargen.length > 0) {
     msg += `⚠️ Estos productos requieren actualización de precios:\n`;
@@ -2877,25 +3001,19 @@ async function mostrarResumenFinal(phone, session) {
     msg += `ℹ️ No encontrado en catálogo: ${noEncontrados.join(", ")}\nUn representante revisará disponibilidad.\n\n`;
   }
 
-  msg += `✏️ _Si algo no está bien, dime qué cambiar (ej: "saca el cloro" o "que sean 3")._\n\n`;
+  msg += `✏️ _Si algo no está bien, dime qué cambiar (ej: "saca el cloro" o "que sean 3")._`;
 
   if (session.data.direccionEntrega) {
     // Volvió al resumen tras corregir el pedido: la dirección ya la dio
-    msg += `🚚 Despacho a: ${session.data.direccionEntrega}\n`;
+    msg += `\n\n🚚 Despacho a: ${session.data.direccionEntrega}`;
     if (session.data.requiereFlete) {
-      msg += `ℹ️ En esa comuna *no realizamos entregas directas*: el envío va por flete externo y un ejecutivo te confirmará su costo.\n`;
+      msg += `\nℹ️ En esa comuna *no realizamos entregas directas*: el envío va por flete externo y un ejecutivo te confirmará su costo.`;
     }
-    msg += `\n`;
-    msg += `📧 ¿A qué *correo electrónico* enviamos la cotización?`;
-    session.step = STEPS.WAITING_EMAIL;
-  } else if (session.data.comunaEntrega) {
-    msg += `📦 Anoté despacho a *${session.data.comunaEntrega}*. ¿Cuál es la *calle y número*?`;
-    session.step = STEPS.WAITING_ENTREGA;
-  } else {
-    msg += `📦 ¿Cuál es la *dirección de entrega*? (calle, comuna y ciudad)`;
-    session.step = STEPS.WAITING_ENTREGA;
   }
   await sendMessage(phone, msg);
+  // Pedido definido → ahora sí, los datos para enviar la cotización
+  session.data.pedidoListo = true;
+  await avanzarDatos(phone, session);
 }
 
 // ─── Buscar en historial cliente existente ────────────────────────────────────
@@ -3983,6 +4101,13 @@ async function manejarHidroSpecs(phone, session, text) {
 }
 
 async function finalizarFlujoHidro(phone, session) {
+  // Con el nuevo orden puede no tener nombre todavía: se pide antes de derivar al especialista
+  if (!session.data.razonSocial) {
+    session.data.hidroPendienteNombre = true;
+    session.step = STEPS.WAITING_RAZON;
+    await sendMessage(phone, `${AVISO_DATOS}\n\n¿A nombre de quién (*nombre o razón social*) preparamos la cotización de la hidrolavadora?`);
+    return;
+  }
   // Todas las hidros procesadas → UN solo email al técnico con todo
   session.step = STEPS.HIDRO_ESPERANDO;
   await enviarSolicitudHidroEmail(phone, session.data);
