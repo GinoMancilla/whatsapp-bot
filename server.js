@@ -843,6 +843,7 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
         `Formato WhatsApp: negrita con UN asterisco (*así*), nunca dos (**). ` +
         `Responde en español, de forma breve (máx 2-3 oraciones). ` +
         `Si no tienes la información exacta, di "un ejecutivo puede ayudarte con eso". ` +
+        `La categoría de cada producto indica para qué es (ej. LAVANDERIA = lavado de ropa): nunca le atribuyas otro uso. ` +
         `Usos, modo de empleo y características: SOLO lo que dicen las descripciones de abajo; si no lo dicen, responde que el detalle está en la ficha técnica del producto en cintecsa.cl o que un ejecutivo puede ayudarte con eso. ` +
         `NUNCA inventes precios, disponibilidad, ni datos de productos. Los precios SOLO se entregan en la cotización final por correo — si preguntan un precio, di que lo verán en la cotización. ` +
         `No hagas preguntas al cliente y no pidas cantidades ni presentaciones. No describas los pasos siguientes ni el estado de la cotización ` +
@@ -934,7 +935,8 @@ async function responderSobreProducto(phone, session, pregunta, ficha) {
     const contenido = [];
     if (pdf) contenido.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf } });
     contenido.push({ type: "text", text:
-      `Producto: ${ficha.nombre} (marca ${ficha.marca || "—"}).\nDescripción en la tienda: ${ficha.descripcion || "—"}\n\nPregunta del cliente: ${pregunta}` });
+      `Producto: ${ficha.nombre} (marca ${ficha.marca || "—"}).\nCategoría en la tienda (indica su uso): ${ficha.categoria || "—"}\n` +
+      `Descripción en la tienda: ${ficha.descripcion || "—"}\n\nPregunta del cliente: ${pregunta}` });
     const r = await anthropicClient.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 350,
@@ -2122,6 +2124,7 @@ function limpiarPedidoInicial(text) {
   return text.trim()
     .replace(/^(hola|buen[oa]s?( (dias|tardes|noches))?|hey|alo)[,!.\s]*/i, "")
     .replace(/^¿?\s*(tienes|tienen|tiene|hay|venden|vende|manejan|necesito|quiero|busco|quisiera|me gustaria)\s+(cotizar\s+)?(alg[uú]n[oa]?s?\s+|un[oa]?s?\s+)?/i, "")
+    .replace(/^¿?\s*alg[uú]n[oa]?s?\s+/i, "")
     .replace(/[¿?]/g, "").trim() || text.trim();
 }
 
@@ -2373,6 +2376,9 @@ async function buscarPorNecesidad(session, texto) {
     { CodProd: r.sku, DesProd: r.nombre, Proveedor: r.marca, "Precio Lista": "", sinPrecio: true });
   return [...filas.filter(f => !f.sinPrecio), ...filas.filter(f => f.sinPrecio)]; // con precio primero
 }
+
+// "No me sirve", "no es lo que busco", "es de lavandería, no sirve": rechazo de las opciones mostradas
+const NO_ME_SIRVE = /\bno (me |nos )?(sirve|sirven|es lo que|son lo que|corresponde|calza)\b|\bno busco (eso|esos|esto)\b|\bninguno (me )?sirve\b|\bnada de eso\b|\botra cosa\b/;
 
 // Agrega a la cotización la opción elegida; las "sinPrecio" van a revisión del ejecutivo
 function agregarOpcionElegida(session, p, item) {
@@ -2679,6 +2685,17 @@ async function manejarEleccionOpcion(phone, session, text) {
     } else if (/^(no|n|cancelar)$/i.test(textNorm)) {
       session.data.productosNoEncontrados.push(item.nombre);
       await sendMessage(phone, `Entendido, omitiremos ese producto.`);
+    } else if (NO_ME_SIRVE.test(textNorm)) {
+      // "El clax mild es de lavandería, no sirve": las opciones no calzan con lo que busca.
+      // No es fuera de tema: se descartan y se le pide que cuente el uso para buscar mejor.
+      session.data.itemsPendientes.shift();
+      session.step = STEPS.WAITING_PRODUTOS;
+      await sendMessage(phone,
+        `Entendido 👍, esas opciones no te sirven.\n\n` +
+        `Cuéntame *para qué lo necesitas* (ej: _"lavar pisos de oficina"_, _"lavar loza a mano"_, _"desinfectar baños"_) ` +
+        `y te busco opciones más adecuadas.`
+      );
+      return;
     } else {
       // El cliente escribió algo libre (ej: "busco el x-75", "quiero el verde")
       // Intentar interpretarlo como una nueva búsqueda para este mismo slot de producto

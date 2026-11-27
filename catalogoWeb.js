@@ -177,7 +177,10 @@ async function recomendar(anthropicClient, necesidad, maxResultados = 4) {
 
 // Texto corto con descripciones para dar contexto a la IA de consultas
 function contexto(consulta, max = 6) {
-  return candidatos(consulta, max).map(p => `${p.nombre}: ${p.descripcion.slice(0, 160)}`).join(" | ");
+  // La categoría de la tienda dice el uso ("LAVANDERIA > DETERGENTES"): va siempre, para que
+  // la IA no adivine el uso por una descripción técnica que no lo menciona.
+  return candidatos(consulta, max)
+    .map(p => `${p.nombre} [categoría: ${p.categoria || "—"}]: ${p.descripcion.slice(0, 300)}`).join(" | ");
 }
 
 // Fichas (de las que se le dieron a la IA) que la respuesta de la IA efectivamente nombra
