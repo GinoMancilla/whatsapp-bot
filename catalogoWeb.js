@@ -62,6 +62,8 @@ function extraerFicha(html, url) {
     descripcion: limpiarHtml(prod.description).slice(0, 600),
     url: prod.url || url,
     imagen: miniatura(Array.isArray(prod.image) ? prod.image[0] : prod.image),
+    // PDF de la ficha técnica (botón "Ficha técnica" de la página), si existe
+    fichaTecnica: (html.match(/<a[^>]+href="(https:\/\/[^"]+\.pdf)"[^>]*>\s*Ficha t[ée]cnica/i) || [])[1] || "",
   };
 }
 
@@ -112,7 +114,7 @@ function iniciar(dirDatos) {
   try {
     const g = JSON.parse(fs.readFileSync(archivo, "utf8"));
     productos = g.productos || []; actualizado = g.actualizado || 0;
-    if (productos.length && !("imagen" in productos[0])) actualizado = 0; // archivo viejo sin imágenes → releer
+    if (productos.length && !("fichaTecnica" in productos[0])) actualizado = 0; // archivo viejo sin fotos/fichas → releer
     console.log(`🛒 Catálogo web: ${productos.length} fichas desde archivo`);
   } catch {}
   if (Date.now() - actualizado > REFRESCO) refrescar();
@@ -187,7 +189,39 @@ function mencionados(consulta, respuesta, max = 4) {
   }).slice(0, max);
 }
 
+// Producto que el cliente nombra en su mensaje ("¿cómo se usa el suma plaq?"):
+// el candidato con al menos 2 palabras distintivas de su nombre presentes en el texto.
+const GENERICAS = new Set("para con por los las del una uno lt ml kg mt un pq cj x".split(" "));
+function nombradoEn(texto) {
+  const t = normalizar(texto);
+  let mejor = null, mejorN = 1;
+  for (const p of candidatos(texto, 10)) {
+    const pal = normalizar(p.nombre).split(" ").filter(w => w.length > 2 && !/\d/.test(w) && !GENERICAS.has(w));
+    const n = pal.filter(w => t.includes(w)).length;
+    if (n > mejorN) { mejor = p; mejorN = n; }
+  }
+  return mejor;
+}
+
+// Ficha técnica en PDF (base64) con caché en memoria — se baja solo cuando alguien pregunta
+const cachePdf = new Map();
+async function fichaPdfBase64(url) {
+  if (!url) return null;
+  if (cachePdf.has(url)) return cachePdf.get(url);
+  try {
+    const { data } = await axios.get(url, { responseType: "arraybuffer", timeout: 20000, headers: { "User-Agent": UA },
+      maxContentLength: 8 * 1024 * 1024 });
+    const b64 = Buffer.from(data).toString("base64");
+    if (cachePdf.size >= 60) cachePdf.delete(cachePdf.keys().next().value);
+    cachePdf.set(url, b64);
+    return b64;
+  } catch (err) {
+    console.warn("Catálogo web: no se pudo bajar la ficha técnica", url, err.message);
+    return null;
+  }
+}
+
 function porSku(sku) { const k = skuClave(sku); return productos.find(p => skuClave(p.sku) === k) || null; }
 
-module.exports = { iniciar, refrescar, recomendar, candidatos, contexto, porSku, mencionados, skuClave, extraerFicha,
+module.exports = { iniciar, refrescar, recomendar, candidatos, contexto, porSku, mencionados, nombradoEn, fichaPdfBase64, skuClave, extraerFicha,
   get total() { return productos.length; } };

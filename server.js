@@ -778,6 +778,8 @@ function cierrePorPaso(session) {
     case STEPS.CONFIRMANDO:
       return `¿Es este el producto correcto? Responde *sí* o *no*.`;
     case STEPS.ELIGIENDO_OPCION:
+      if ((session.data.opcionesActuales || []).length === 1) return `¿Lo agregamos a tu cotización? Responde *sí* o *no*.`;
+      return `Responde con el *número* de la opción que necesitas.`;
     case STEPS.WAITING_FORMATO:
       return `Responde con el *número* de la opción que necesitas.`;
     case STEPS.WAITING_PRODUTOS:
@@ -887,7 +889,58 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
 const SENALES_CAMBIO = /\b(cambia\w*|en vez|en lugar|mejor|no el|no la|no los|no las|no era|no es (ese|esa)|me equivoque|equivoque|saca\w*|quita\w*|elimina\w*|borra\w*|no me pregunt\w*|corrig\w*|modific\w*|que sean|agrega\w*|anad\w*|suma\w*|tambien|ademas|el de \d|la de \d|despach\w*)\b/;
 
 // Preguntas informativas sobre un producto (se responden, no son pedidos ni cambios)
-const PREGUNTA_INFO = /\b(para que (sirve|se usa|es)|sirve (para|en)|como se (usa|aplica|diluye)|que (es|diferencia)|cual (me )?recomiendas?|me recomiendas|es (apto|seguro|toxico)|se puede usar|cuanto (dura|rinde)|rinde|ficha tecnica)\b/;
+const PREGUNTA_INFO = /\b(para que (sirve|se usa|es)|sirve (para|en)|como se (usa|aplica|diluye|ocupa)|que (es|diferencia|contiene|trae)|cual (me )?recomiendas?|me recomiendas|es (apto|seguro|toxico)|se puede usar|cuanto (dura|rinde)|rinde|ficha( tecnica)?|describ\w*|contenido|contiene|composicion|ingrediente\w*|caracteristica\w*|modo de (uso|empleo)|dilu\w*|precaucion\w*|mas (info|informacion|detalle\w*)|detalle\w*|cuentame|dime mas)\b/;
+
+// ¿De qué producto habla el cliente? 1) uno que nombre en el mensaje; 2) la opción
+// que se le está mostrando ("me puedes describir su contenido"); 3) "el 2" entre
+// varias opciones; 4) el último producto que agregó al pedido.
+function productoReferido(session, texto) {
+  const nombrado = catalogoWeb.nombradoEn(texto);
+  if (nombrado) return nombrado;
+  const opciones = session.data.opcionesActuales || [];
+  const enPantalla = [STEPS.ELIGIENDO_OPCION, STEPS.CONFIRMANDO].includes(session.step);
+  if (enPantalla && opciones.length === 1) return catalogoWeb.porSku(opciones[0].CodProd);
+  const num = normalizar(texto).match(/\b(?:el|la|opcion|numero|n)\s*(\d)\b/);
+  if (enPantalla && num && opciones[num[1] - 1]) return catalogoWeb.porSku(opciones[num[1] - 1].CodProd);
+  if (enPantalla && session.data.resultadoActual?.principal) return catalogoWeb.porSku(session.data.resultadoActual.principal.CodProd);
+  const ultimo = (session.data.productosConfirmados || []).slice(-1)[0];
+  if (ultimo) return catalogoWeb.porSku(ultimo.seleccionado?.CodProd);
+  return null;
+}
+
+// Responde una pregunta sobre UN producto leyendo su ficha técnica (PDF de cintecsa.cl)
+// y la descripción de la tienda. La IA solo usa lo que dicen esos documentos.
+async function responderSobreProducto(phone, session, pregunta, ficha) {
+  if (!anthropicClient || !ficha) return false;
+  try {
+    const pdf = await catalogoWeb.fichaPdfBase64(ficha.fichaTecnica);
+    const contenido = [];
+    if (pdf) contenido.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf } });
+    contenido.push({ type: "text", text:
+      `Producto: ${ficha.nombre} (marca ${ficha.marca || "—"}).\nDescripción en la tienda: ${ficha.descripcion || "—"}\n\nPregunta del cliente: ${pregunta}` });
+    const r = await anthropicClient.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 350,
+      system:
+        "Eres el asistente de ventas de CINTEC (higiene y limpieza, Chile). Responde la pregunta del cliente sobre ESTE producto usando " +
+        "SOLO la ficha técnica adjunta y la descripción de la tienda. Si el dato no está ahí, dilo y ofrece que un ejecutivo lo confirme. " +
+        "Nunca des precios ni stock. Español, breve (máx 5 líneas o viñetas cortas), formato WhatsApp: negrita con UN asterisco. " +
+        "No hagas preguntas al cliente ni describas los pasos siguientes de la cotización. " +
+        `Si la pregunta no es sobre este producto ni sobre CINTEC, responde exactamente: "${RESPUESTA_FUERA_DE_TEMA}".`,
+      messages: [{ role: "user", content: contenido }],
+    });
+    let reply = (r.content[0]?.text || "").replace(/\*\*(.+?)\*\*/g, "*$1*").replace(/(?<=[.!)*])\s*¿[^?]*\?\s*$/, "").trim();
+    if (!reply) return false;
+    if (reply.includes(RESPUESTA_FUERA_DE_TEMA)) reply = RESPUESTA_FUERA_DE_TEMA;
+    else if (ficha.fichaTecnica) reply += `\n\n📄 Ficha técnica: ${ficha.fichaTecnica}`;
+    registrarConsulta(phone, pregunta, reply);
+    await sendMessage(phone, `${reply}\n\n${cierrePorPaso(session)}`);
+    return true;
+  } catch (err) {
+    console.error("Error respondiendo sobre producto:", err.message);
+    return false;
+  }
+}
 
 const TOOL_CAMBIOS_PEDIDO = {
   name: "registrar_cambios_pedido",
@@ -1376,6 +1429,17 @@ async function handleMessage(phone, text) {
   const esCorreccionEnMas = session.step === STEPS.WAITING_MAS &&
     (session.data.productosConfirmados || []).length > 0 && SENALES_CAMBIO.test(normalizar(text)) &&
     !PREGUNTA_INFO.test(normalizar(text));
+  // Pregunta sobre un producto concreto ("me puedes describir su contenido", "¿cómo se usa
+  // el suma plaq?") → se responde con su ficha técnica, en cualquier paso del pedido.
+  // También cualquier pregunta ("¿qué pH tiene?") mientras se le muestra un producto,
+  // o que nombre un producto de la tienda.
+  const mirandoProducto = [STEPS.ELIGIENDO_OPCION, STEPS.CONFIRMANDO].includes(session.step);
+  if (session.step !== STEPS.START && (PREGUNTA_INFO.test(normalizar(text)) ||
+      (text.includes("?") && (mirandoProducto || catalogoWeb.nombradoEn(text))))) {
+    const ficha = productoReferido(session, text);
+    if (ficha && await responderSobreProducto(phone, session, text, ficha)) return;
+  }
+
   // Si le preguntamos qué productos necesita y describe un uso ("algo para sacar grasa
   // de la cocina"), es un pedido: va a la búsqueda por necesidad (opciones para cotizar),
   // no a la conversación libre.
