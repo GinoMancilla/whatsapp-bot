@@ -31,6 +31,14 @@ function limpiarHtml(s) {
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, " ").replace(/\s*Ficha t[ée]cnica\s*$/i, "").trim();
 }
 
+// Imagen de Jumpseller en tamaño miniatura (≈8 KB en vez de la foto completa)
+// ".../cintecsa/image/63863371/1103049.jpg?1748" → ".../cintecsa/image/63863371/resize/240/240?1748"
+function miniatura(src) {
+  if (!src || typeof src !== "string") return "";
+  const m = src.match(/^(https:\/\/cdnx\.jumpseller\.com\/[^/]+\/image\/\d+)\/[^?]*(\?.*)?$/);
+  return m ? `${m[1]}/resize/240/240${m[2] || ""}` : src;
+}
+
 function extraerFicha(html, url) {
   const bloques = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
   let prod = null, categoria = "";
@@ -53,6 +61,7 @@ function extraerFicha(html, url) {
     categoria,
     descripcion: limpiarHtml(prod.description).slice(0, 600),
     url: prod.url || url,
+    imagen: miniatura(Array.isArray(prod.image) ? prod.image[0] : prod.image),
   };
 }
 
@@ -102,6 +111,7 @@ function iniciar(dirDatos) {
   try {
     const g = JSON.parse(fs.readFileSync(archivo, "utf8"));
     productos = g.productos || []; actualizado = g.actualizado || 0;
+    if (productos.length && !("imagen" in productos[0])) actualizado = 0; // archivo viejo sin imágenes → releer
     console.log(`🛒 Catálogo web: ${productos.length} fichas desde archivo`);
   } catch {}
   if (Date.now() - actualizado > REFRESCO) refrescar();
@@ -167,7 +177,16 @@ function contexto(consulta, max = 6) {
   return candidatos(consulta, max).map(p => `${p.nombre}: ${p.descripcion.slice(0, 160)}`).join(" | ");
 }
 
+// Fichas (de las que se le dieron a la IA) que la respuesta de la IA efectivamente nombra
+function mencionados(consulta, respuesta, max = 4) {
+  const r = normalizar(respuesta);
+  return candidatos(consulta, 6).filter(p => {
+    const clave = normalizar(p.nombre).split(" ").filter(w => w.length > 2 && !/^\d+$/.test(w)).slice(0, 3);
+    return clave.length >= 2 && clave.every(w => r.includes(w));
+  }).slice(0, max);
+}
+
 function porSku(sku) { const k = skuClave(sku); return productos.find(p => skuClave(p.sku) === k) || null; }
 
-module.exports = { iniciar, refrescar, recomendar, candidatos, contexto, porSku, skuClave, extraerFicha,
+module.exports = { iniciar, refrescar, recomendar, candidatos, contexto, porSku, mencionados, skuClave, extraerFicha,
   get total() { return productos.length; } };

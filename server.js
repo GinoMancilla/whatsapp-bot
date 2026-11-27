@@ -849,12 +849,27 @@ async function responderConsulta(phone, session, pregunta, cierre = CIERRE_POR_D
     const fueraDeTema = /^\s*TEMA:\s*OTRO/i.test(bruto) || !bruto.replace(/^\s*TEMA:\s*\w+\s*/i, "").trim();
     const reply = fueraDeTema
       ? RESPUESTA_FUERA_DE_TEMA
-      : bruto.replace(/^\s*TEMA:\s*\w+\s*/i, "").replace(/\*\*(.+?)\*\*/g, "*$1*").trim();
+      : bruto.replace(/^\s*TEMA:\s*\w+\s*/i, "").replace(/\*\*(.+?)\*\*/g, "*$1*").trim()
+          // si igual cerró con una pregunta ("¿Cuál te interesa?"), se quita: la siguiente pregunta la pone el bot
+          .replace(/(?<=[.!)*])\s*¿[^?]*\?\s*$/, "").trim();
     registrarConsulta(phone, pregunta, reply); // auditoría: pregunta del cliente + respuesta de la IA
     if (fueraDeTema || /ejecutivo puede ayudarte/i.test(reply)) {
       registrarConversacionProblematica(phone, session, "sin_respuesta", { pregunta, respuestaClaude: reply });
     }
-    await sendMessage(phone, `${reply}\n\n${cierre === CIERRE_POR_DEFECTO ? cierrePorPaso(session) : cierre}`);
+    const textoCierre = cierre === CIERRE_POR_DEFECTO ? cierrePorPaso(session) : cierre;
+    const recomendados = esCanalWeb(phone) && !fueraDeTema ? catalogoWeb.mencionados(pregunta, reply) : [];
+    if (recomendados.length) {
+      // Chat web: los productos que la IA nombró, como tarjetas con foto y botón para cotizarlos
+      await sendMessage(phone, reply);
+      encolarWeb(phone, {
+        tipo: "productos",
+        items: recomendados.map(p => ({ nombre: p.nombre, marca: p.marca, imagen: p.imagen || "", url: p.url,
+          valor: p.nombre, accion: "Cotizar" })),
+      });
+      await sendMessage(phone, textoCierre);
+    } else {
+      await sendMessage(phone, `${reply}\n\n${textoCierre}`);
+    }
     return true;
   } catch (err) {
     console.error("Error Claude:", err.message);
@@ -1261,7 +1276,12 @@ async function handleMessage(phone, text) {
     seguimientosPendientes.delete(phone);
     const cot = cotizacionesLog.find(e => e.id === seg.cotId);
     const tSeg = normalizar(text);
-    const quiereCotizar = /^hola\.?$/.test(tSeg) || /cotizar|nueva cotizacion|otra cotizacion/.test(tSeg);
+    // Si en vez de responder el seguimiento pide un producto o pregunta por uno
+    // ("algo para sacar grasa de la cocina"), se atiende con el flujo normal
+    const intencionSeg = detectarIntencionTexto(text);
+    const quiereCotizar = /^hola\.?$/.test(tSeg) || /cotizar|nueva cotizacion|otra cotizacion/.test(tSeg) ||
+      intencionSeg === "cotizar" || intencionSeg === "producto_vago" ||
+      esPedidoPorNecesidad(text) || PREGUNTA_INFO.test(tSeg) || !!extraerProductoDeLink(text);
     const sinInteres = /^no\.?$/.test(tSeg) ||
       /no gracias|no me interesa|no por ahora|ya compr|no quiero|no lo necesito|descartar|mas adelante|quizas despues/.test(tSeg);
 
@@ -1356,7 +1376,12 @@ async function handleMessage(phone, text) {
   const esCorreccionEnMas = session.step === STEPS.WAITING_MAS &&
     (session.data.productosConfirmados || []).length > 0 && SENALES_CAMBIO.test(normalizar(text)) &&
     !PREGUNTA_INFO.test(normalizar(text));
-  if (stepsConversacionales.has(session.step) && esUnaConsulta(text) && !esCorreccionEnMas) {
+  // Si le preguntamos qué productos necesita y describe un uso ("algo para sacar grasa
+  // de la cocina"), es un pedido: va a la búsqueda por necesidad (opciones para cotizar),
+  // no a la conversación libre.
+  const pedidoPorNecesidad = [STEPS.WAITING_PRODUTOS, STEPS.WAITING_MAS].includes(session.step) &&
+    esPedidoPorNecesidad(text) && !text.includes("?") && !PREGUNTA_INFO.test(normalizar(text));
+  if (stepsConversacionales.has(session.step) && esUnaConsulta(text) && !esCorreccionEnMas && !pedidoPorNecesidad) {
     const atendido = await responderConsulta(phone, session, text);
     if (atendido) return;
   }
@@ -1421,7 +1446,10 @@ async function handleMessage(phone, text) {
       // (ej. "hola necesito cotizar lavaloza" o "hola vi un producto en la
       // página") — si es así, no mostramos el menú genérico 1/2: respondemos
       // directo a lo que pidió, con el mismo saludo de bienvenida primero.
-      const intencion = detectarIntencionTexto(text);
+      // "algo para sacar grasa de la cocina" como primer mensaje = quiere cotizar eso
+      const porNecesidad = esPedidoPorNecesidad(text) && detectarIntencionTexto(text) !== "contacto";
+      if (porNecesidad) session.data.textoProductos = text.trim();
+      const intencion = porNecesidad ? "cotizar" : detectarIntencionTexto(text);
       const saludo = `👋 ¡Hola! Bienvenido/a a *CINTEC*.\n\n`;
 
       if (intencion === "contacto") {
@@ -2388,13 +2416,29 @@ async function mostrarOpcionesProducto(phone, session, opciones, item) {
     msg += `   🏭 ${prov}\n\n`;
   });
 
-  if (lista.length > 1) {
-    msg += `Responde con el *número* de tu elección o escribe *todos* para cotizarlos todos.`;
-  } else {
-    msg += `Responde *sí* para confirmar o *no* para cancelar.`;
+  const instruccion = lista.length > 1
+    ? `Responde con el *número* de tu elección o escribe *todos* para cotizarlos todos.`
+    : `Responde *sí* para confirmar o *no* para cancelar.`;
+
+  if (esCanalWeb(phone)) {
+    // Chat web: tarjetas con foto y link a la ficha de la tienda (datos de cintecsa.cl)
+    await sendMessage(phone, `📋 *Opciones para "${item.nombre}":*`);
+    encolarWeb(phone, {
+      tipo: "productos",
+      items: lista.map((p, i) => {
+        const ficha = catalogoWeb.porSku(p.CodProd);
+        return {
+          numero: i + 1, nombre: p.DesProd, marca: abreviarProveedor(p.Proveedor),
+          imagen: ficha?.imagen || "", url: ficha?.url || "",
+          valor: lista.length > 1 ? String(i + 1) : "sí",
+        };
+      }),
+    });
+    await sendMessage(phone, instruccion);
+    return;
   }
 
-  await sendMessage(phone, msg);
+  await sendMessage(phone, msg + instruccion);
 }
 
 // ─── Manejar elección de opción ───────────────────────────────────────────────

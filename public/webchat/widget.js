@@ -81,6 +81,16 @@
     ".yo{align-self:flex-end;background:var(--c);color:#fff;border-bottom-right-radius:4px}",
     ".msg a{color:inherit;text-decoration:underline}",
     ".file{display:inline-flex;align-items:center;gap:8px;margin-top:2px;padding:8px 12px;border-radius:10px;background:#fff3f3;color:#8a0610!important;text-decoration:none!important;font-weight:600;border:1px solid #f4c7ca}",
+    ".cards{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scroll-snap-type:x mandatory;flex:none}",
+    ".card{flex:0 0 150px;scroll-snap-align:start;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:8px;display:flex;flex-direction:column;gap:4px}",
+    ".card img,.noimg{width:100%;height:110px;object-fit:contain;border-radius:8px;background:#fff}",
+    ".noimg{display:grid;place-items:center;font-size:34px;background:#f4f2f0}",
+    ".cname{font-size:12px;line-height:1.3;color:#1b1f24;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;min-height:47px}",
+    ".cbrand{font-size:11px;color:#6b6560}",
+    ".cact{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:auto}",
+    ".pick{border:0;background:var(--c);color:#fff;border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer}",
+    ".pick:focus-visible{outline:3px solid #1d6fe0;outline-offset:2px}",
+    ".cact a{font-size:11px;color:#6b6560}",
     ".typing{align-self:flex-start;background:#fff;border-radius:14px;padding:12px 14px;display:flex;gap:4px}",
     ".dot{width:7px;height:7px;border-radius:50%;background:#9aa0a6;animation:b 1.2s infinite}",
     ".dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}",
@@ -157,6 +167,26 @@
       a.target = "_blank"; a.rel = "noopener";
       a.textContent = "📄 Descargar " + (m.nombre || "archivo");
       el.appendChild(a);
+    } else if (m.tipo === "productos") {
+      // Tarjetas con foto (datos públicos de la ficha en cintecsa.cl)
+      el = document.createElement("div");
+      el.className = "cards";
+      (m.items || []).forEach(function (p) {
+        var c = document.createElement("div");
+        c.className = "card";
+        var img = p.imagen ? '<img src="' + esc(p.imagen) + '" alt="">' : '<div class="noimg">📦</div>';
+        c.innerHTML = img +
+          '<div class="cname">' + (p.numero ? "<b>" + p.numero + ".</b> " : "") + esc(p.nombre) + "</div>" +
+          (p.marca ? '<div class="cbrand">' + esc(p.marca) + "</div>" : "") +
+          '<div class="cact"><button type="button" class="pick">' + esc(p.accion || (p.numero ? "Elegir" : "Cotizar")) + "</button>" +
+          (p.url && /^https:\/\//.test(p.url) ? '<a href="' + esc(p.url) + '" target="_blank" rel="noopener">Ver ficha</a>' : "") + "</div>";
+        c.querySelector(".pick").addEventListener("click", function () {
+          enviar(p.valor, (p.accion === "Cotizar" ? "Quiero cotizar: " : "Elijo: ") + p.nombre);
+        });
+        var im = c.querySelector("img");
+        if (im) im.addEventListener("error", function () { im.outerHTML = '<div class="noimg">📦</div>'; });
+        el.appendChild(c);
+      });
     } else {
       el = document.createElement("div");
       el.className = "msg " + (m.de === "yo" ? "yo" : "bot");
@@ -172,7 +202,7 @@
     chips.innerHTML = "";
     var ultimo = null;
     for (var i = estado.mensajes.length - 1; i >= 0; i--) {
-      if (estado.mensajes[i].de !== "yo" && estado.mensajes[i].tipo !== "archivo") { ultimo = estado.mensajes[i]; break; }
+      if (estado.mensajes[i].de !== "yo" && !estado.mensajes[i].tipo) { ultimo = estado.mensajes[i]; break; }
       if (estado.mensajes[i].de === "yo") break;
     }
     var opciones = [];
@@ -209,7 +239,9 @@
 
   function agregar(lista) {
     lista.forEach(function (m) {
-      var item = m.tipo === "archivo" ? { de: "bot", tipo: "archivo", nombre: m.nombre, url: m.url } : { de: "bot", texto: m.texto };
+      var item = m.tipo === "archivo" ? { de: "bot", tipo: "archivo", nombre: m.nombre, url: m.url }
+        : m.tipo === "productos" ? { de: "bot", tipo: "productos", items: m.items || [] }
+        : { de: "bot", texto: m.texto };
       estado.mensajes.push(item);
       pintar(item);
     });
