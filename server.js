@@ -463,6 +463,7 @@ async function procesarSeguimientos() {
   let cambios = false;
   for (const c of cotizacionesLog) {
     if (c.tipo !== "cotizacion" || c.seguimientoEnviado) continue;
+    if (esCanalWeb(c.phone)) continue; // chat web: sin WhatsApp al que mandar la plantilla
     const edad = now - new Date(c.timestamp).getTime();
     if (edad < SEGUIMIENTO_TRAS || edad > SEGUIMIENTO_MAX) continue;
 
@@ -1429,8 +1430,13 @@ async function handleMessage(phone, text) {
     }
 
     case STEPS.MENU_INICIO:
-      await manejarMenuInicio(phone, session, text);
-      break;
+      // Botón "Cotizar este producto" del chat web (o link pegado después del
+      // saludo): ya trae el producto → mismo camino que ESPERANDO_PRODUCTO.
+      if (!extraerProductoDeLink(text)) {
+        await manejarMenuInicio(phone, session, text);
+        break;
+      }
+      // falls through
 
     case STEPS.ESPERANDO_PRODUCTO: {
       // Esperábamos saber cuál producto le interesa (tras una mención vaga).
@@ -1961,7 +1967,7 @@ async function notificarContactoEjecutivo(phone, nombre, motivo, session) {
           <h2 style="color:#3498db;">📞 Solicitud de contacto con ejecutivo</h2>
           <p><strong>Fecha:</strong> ${fecha}</p>
           <p><strong>Nombre:</strong> ${escapeHtml(nombre)}</p>
-          <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
+          ${lineaContactoHtml(phone)}
           <p><strong>Resumen para el ejecutivo:</strong></p>
           <blockquote style="background:#eafaf1;padding:12px;border-left:4px solid #2ecc71;border-radius:4px;">
             ${escapeHtml(resumen)}
@@ -2993,6 +2999,12 @@ async function reenviarCotizacionPorWhatsapp(phone) {
 
   try {
     const pdfBuffer = await generarCotizacionPdf(datosPdf, folio, total, fecha);
+    if (esCanalWeb(phone)) {
+      // Chat web: link de descarga temporal en vez de documento de WhatsApp
+      const url = guardarPdfWeb(pdfBuffer, `Cotizacion-${folio}.pdf`);
+      encolarWeb(phone, { tipo: "archivo", nombre: `Cotización ${folio} (PDF)`, url });
+      return;
+    }
     const mediaId = await subirMediaWhatsapp(pdfBuffer, `Cotizacion-${folio}.pdf`, "application/pdf");
     await enviarDocumentoWhatsapp(phone, mediaId, `Cotizacion-${folio}.pdf`, `Cotización ${folio}`);
   } catch (err) {
@@ -3096,12 +3108,19 @@ async function enviarCotizacionCompleta(phone, data) {
       `✅ ¡Listo! Tu cotización *${folio}* fue enviada a *${data.emailCliente}*.\n\n` +
       `¡Gracias por preferirnos! Escribe *hola* si necesitas algo más. 🙏`
     );
+    if (esCanalWeb(phone) && pdfBase64) {
+      // En la web además se puede descargar al tiro, sin esperar el correo
+      encolarWeb(phone, { tipo: "archivo", nombre: `Cotización ${folio} (PDF)`,
+        url: guardarPdfWeb(Buffer.from(pdfBase64, "base64"), `Cotizacion-${folio}.pdf`) });
+    }
     await sendMessage(phone,
       `💳 *Formas de pago:*\n\n` +
       `1️⃣ Transferencia bancaria\n` +
       `2️⃣ Pago contra factura (clientes con crédito aprobado)\n\n` +
       DATOS_BANCARIOS_WSP + `\n\n` +
-      `Cuando realices el pago, *envía el comprobante por este mismo chat* 📎 indicando el folio *${folio}*, y nuestro equipo lo validará.`
+      (esCanalWeb(phone)
+        ? `Cuando realices el pago, *envía el comprobante a caja@cintecsa.cl* indicando el folio *${folio}*, y nuestro equipo lo validará.`
+        : `Cuando realices el pago, *envía el comprobante por este mismo chat* 📎 indicando el folio *${folio}*, y nuestro equipo lo validará.`)
     );
     console.log(`📧 Cotización enviada a ${data.emailCliente}`);
   } catch (err) {
@@ -3170,7 +3189,7 @@ async function finalizarComprobante(phone, archivo, cot, noConfirmado = false) {
       html: `<h2 style="color:#c0392b;">💰 Comprobante de pago recibido vía WhatsApp</h2>
         <p><strong>Fecha de recepción:</strong> ${fecha}</p>
         <p><strong>Cliente:</strong> ${escapeHtml(razonSocial || "–")} | RUT: ${escapeHtml(rut || "–")}</p>
-        <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
+        ${lineaContactoHtml(phone)}
         ${noConfirmado ? `<p style="color:#e67e22;"><strong>⚠️ El cliente no confirmó a qué cotización corresponde.</strong> Se asocia la más reciente — verificar.</p>` : ""}
         ${buildDetalleCotizacionHtml(cot)}
         <p style="margin-top:16px;">El comprobante viene adjunto. Validar el pago y confirmar al cliente.</p>`,
@@ -3445,7 +3464,7 @@ async function notificarSeguimientoInteresado(phone, cot, mensaje) {
       html: `<h2 style="color:#c0392b;">🔥 Respuesta al seguimiento de cotización</h2>
         <p><strong>Fecha:</strong> ${fecha}</p>
         <p><strong>Cliente:</strong> ${escapeHtml(cot?.razonSocial || "–")} | RUT: ${escapeHtml(cot?.rut || "–")}</p>
-        <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
+        ${lineaContactoHtml(phone)}
         ${cot ? `<p><strong>Cotización:</strong> ${escapeHtml(cot.id)} por $${(cot.total || 0).toLocaleString("es-CL")} (${new Date(cot.timestamp).toLocaleString("es-CL", { timeZone: "America/Santiago" })})</p>` : ""}
         <p><strong>Mensaje del cliente:</strong></p>
         <div style="background:#f5f5f5;padding:12px 16px;border-radius:8px;">${escapeHtml(mensaje)}</div>
@@ -3469,7 +3488,7 @@ async function notificarHandoff(phone, data) {
       html: `<h2>👤 Cliente solicita atención humana</h2>
         <p><strong>Fecha:</strong> ${fecha}</p>
         <p><strong>Cliente:</strong> ${escapeHtml(data?.razonSocial || "–")} | RUT: ${escapeHtml(data?.rut || "–")}</p>
-        <p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
+        ${lineaContactoHtml(phone)}
         <p>El cliente solicitó hablar con un ejecutivo durante el flujo de cotización.</p>`,
     });
   } catch (err) {
@@ -3815,6 +3834,8 @@ async function notificarInterno(phone, data) {
 
 // ─── Enviar mensaje WhatsApp ──────────────────────────────────────────────────
 async function sendMessage(to, body) {
+  // Canal web: no va a Meta, queda en la bandeja de salida que lee la burbuja
+  if (esCanalWeb(to)) { encolarWeb(to, { tipo: "texto", texto: body }); return; }
   try {
     await axios.post(
       `https://graph.facebook.com/v23.0/${WHATSAPP_PHONE_ID}/messages`,
@@ -4814,6 +4835,113 @@ app.get("/privacidad", (req, res) => {
 <footer>© ${new Date().getFullYear()} Sociedad Comercial Cintec Limitada · Puerto Montt, Chile</footer>
 </div></body></html>`);
 });
+
+// ─── Canal web: burbuja de chat para cintecsa.cl ─────────────────────────────
+// La burbuja (proyecto C:\chatbot-web, copiada a public/webchat) conversa con el
+// MISMO motor que WhatsApp: cada visitante es una "sesión" con id `web:<uuid>`.
+// sendMessage() detecta ese prefijo y deja la respuesta en una bandeja de salida
+// en memoria (no la manda a Meta); el endpoint la devuelve como JSON y la burbuja
+// pregunta cada pocos segundos por mensajes que lleguen después (ej. especialista).
+const WEBCHAT_ORIGINS = new Set(
+  (process.env.WEBCHAT_ORIGINS || "https://www.cintecsa.cl,https://cintecsa.cl")
+    .split(",").map(s => s.trim()).filter(Boolean)
+);
+const webOutbox = new Map();   // "web:<id>" → { items: [...], ts }
+const webPdfs   = new Map();   // token → { buffer, filename, exp }
+const webColas  = new Map();   // "web:<id>" → Promise (un mensaje a la vez por sesión)
+
+function esCanalWeb(phone) { return typeof phone === "string" && phone.startsWith("web:"); }
+
+function encolarWeb(id, item) {
+  const box = webOutbox.get(id) || { items: [], ts: 0 };
+  box.items.push(item);
+  if (box.items.length > 50) box.items.splice(0, box.items.length - 50);
+  box.ts = Date.now();
+  webOutbox.set(id, box);
+}
+
+function drenarWeb(id) {
+  const box = webOutbox.get(id);
+  if (!box) return [];
+  webOutbox.delete(id);
+  return box.items;
+}
+
+function guardarPdfWeb(buffer, filename) {
+  const token = crypto.randomBytes(24).toString("hex");
+  webPdfs.set(token, { buffer, filename, exp: Date.now() + 60 * 60 * 1000 });
+  return `/api/web-chat/pdf/${token}`;
+}
+
+// Línea de contacto en los correos internos: WhatsApp con link, o aviso de chat web
+function lineaContactoHtml(phone) {
+  if (esCanalWeb(phone)) {
+    return `<p><strong>Canal:</strong> Chat web cintecsa.cl <em>(sin WhatsApp asociado — contactar por el correo/datos indicados)</em></p>`;
+  }
+  return `<p><strong>WhatsApp:</strong> <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>`;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, box] of webOutbox) if (now - box.ts > SESSION_TTL) webOutbox.delete(id);
+  for (const [t, p] of webPdfs) if (now > p.exp) webPdfs.delete(t);
+}, 5 * 60 * 1000);
+
+function corsWebChat(req, res, next) {
+  const origin = req.headers.origin;
+  if (origin && (WEBCHAT_ORIGINS.has(origin) || origin === `${req.protocol}://${req.get("host")}`)) {
+    res.set("Access-Control-Allow-Origin", origin);
+    res.set("Vary", "Origin");
+    res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+}
+app.use("/api/web-chat", corsWebChat);
+
+function idWebValido(sessionId) {
+  return typeof sessionId === "string" && /^[A-Za-z0-9-]{16,64}$/.test(sessionId);
+}
+
+app.post("/api/web-chat", async (req, res) => {
+  if (!checkHttpRateLimit(req.ip, 40)) return res.status(429).json({ error: "Demasiados mensajes. Espera un momento." });
+  const { sessionId, text } = req.body || {};
+  if (!idWebValido(sessionId)) return res.status(400).json({ error: "sesión inválida" });
+  const texto = typeof text === "string" ? text.trim().slice(0, 1000) : "";
+  if (!texto) return res.status(400).json({ error: "mensaje vacío" });
+  const id = `web:${sessionId}`;
+  if (!checkRateLimit(id)) return res.status(429).json({ error: "Vas muy rápido 🙂 Espera unos segundos." });
+
+  // Mensajes de la misma sesión se procesan en orden, uno a la vez
+  const previa = webColas.get(id) || Promise.resolve();
+  const actual = previa.then(() => handleMessage(id, texto)).catch(err => {
+    console.error("Error chat web:", err.message);
+    encolarWeb(id, { tipo: "texto", texto: "⚠️ Tuve un problema procesando tu mensaje. Intenta de nuevo o escribe *ejecutivo*." });
+  });
+  webColas.set(id, actual);
+  await actual;
+  if (webColas.get(id) === actual) webColas.delete(id);
+  res.json({ mensajes: drenarWeb(id) });
+});
+
+app.get("/api/web-chat/poll", (req, res) => {
+  if (!checkHttpRateLimit(req.ip, 60)) return res.status(429).json({ mensajes: [] });
+  const { sessionId } = req.query;
+  if (!idWebValido(sessionId)) return res.status(400).json({ error: "sesión inválida" });
+  res.json({ mensajes: drenarWeb(`web:${sessionId}`) });
+});
+
+app.get("/api/web-chat/pdf/:token", (req, res) => {
+  const p = webPdfs.get(req.params.token);
+  if (!p || Date.now() > p.exp) return res.status(404).send("El link expiró. Pide la cotización de nuevo en el chat.");
+  res.set("Content-Type", "application/pdf");
+  res.set("Content-Disposition", `attachment; filename="${p.filename}"`);
+  res.send(p.buffer);
+});
+
+// Archivos de la burbuja (widget.js) y página de demostración
+app.use("/webchat", express.static(require("path").join(__dirname, "public", "webchat"), { maxAge: "5m" }));
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;

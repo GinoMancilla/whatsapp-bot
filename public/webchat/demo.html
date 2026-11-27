@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo chat web — CINTEC</title>
+<meta name="robots" content="noindex">
+<!-- La burbuja detecta que es una ficha de producto igual que en Jumpseller -->
+<meta property="og:type" content="product">
+<meta property="og:title" content="JABON DERMO FOAM 800 ML X 1 UN">
+<style>
+  :root{--rojo:#ed0914;--tinta:#1b1f24;--suave:#6b6560;--linea:#e6e2de;--fondo:#faf9f8}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--fondo);color:var(--tinta);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.5}
+  .aviso{background:#1b1f24;color:#fff;font-size:13px;text-align:center;padding:8px 16px}
+  .aviso b{color:#ffb3b7}
+  header{background:#fff;border-bottom:1px solid var(--linea)}
+  .barra{max-width:1080px;margin:0 auto;padding:14px 16px;display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+  .logo{font-weight:900;font-size:26px;letter-spacing:.04em;color:var(--rojo)}
+  nav{display:flex;gap:18px;font-size:14px;color:var(--suave);flex-wrap:wrap}
+  main{max-width:1080px;margin:0 auto;padding:24px 16px 80px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:40px}
+  @media (max-width:760px){main{grid-template-columns:1fr;gap:20px}}
+  .migas{grid-column:1/-1;font-size:13px;color:var(--suave)}
+  .foto{background:#fff;border:1px solid var(--linea);border-radius:12px;aspect-ratio:1;display:grid;place-items:center}
+  .botella{width:38%;height:70%;border-radius:18px 18px 12px 12px;background:linear-gradient(160deg,#e9f4ff,#b8d8f5);position:relative;box-shadow:inset 0 -10px 30px rgba(0,0,0,.06)}
+  .botella::before{content:"";position:absolute;left:30%;right:30%;top:-14%;height:16%;background:#2b3a4a;border-radius:6px 6px 2px 2px}
+  .botella span{position:absolute;inset:38% 10% auto;background:#fff;border-radius:6px;text-align:center;font-size:12px;font-weight:700;padding:8px 4px;color:#2b3a4a}
+  h1{font-size:clamp(22px,3vw,30px);line-height:1.2;margin:0 0 6px;text-wrap:balance}
+  .cod{font-size:13px;color:var(--suave);margin-bottom:18px}
+  .precio{font-size:28px;font-weight:800;margin:0 0 4px;font-variant-numeric:tabular-nums}
+  .iva{font-size:13px;color:var(--suave);margin-bottom:20px}
+  .comprar{display:flex;gap:10px;flex-wrap:wrap}
+  .btn{border:0;border-radius:8px;padding:12px 20px;font-size:15px;font-weight:700;cursor:pointer}
+  .rojo{background:var(--rojo);color:#fff}
+  .gris{background:#fff;border:1.5px solid var(--linea);color:var(--tinta)}
+  .desc{margin-top:28px;border-top:1px solid var(--linea);padding-top:18px;font-size:15px;color:#3a3f45;max-width:60ch}
+  .desc h2{font-size:16px;margin:0 0 8px}
+</style>
+</head>
+<body>
+<div class="aviso"><b>Página de demostración</b> — imita una ficha de la tienda para probar el chat. No es cintecsa.cl.</div>
+<header><div class="barra"><div class="logo">CINTEC</div>
+  <nav><span>Higiene</span><span>Limpieza</span><span>Desinfección</span><span>Papeles</span><span>Contacto</span></nav></div></header>
+<main>
+  <div class="migas">Inicio / Higiene / Jabones</div>
+  <div class="foto" aria-hidden="true"><div class="botella"><span>DERMO<br>FOAM</span></div></div>
+  <section>
+    <h1>JABON DERMO FOAM 800 ML X 1 UN</h1>
+    <div class="cod">Código: demostración</div>
+    <p class="precio">Precio en el chat</p>
+    <div class="iva">Pide tu cotización con despacho incluido</div>
+    <div class="comprar">
+      <button class="btn rojo" type="button" disabled>Agregar al carro</button>
+      <button class="btn gris" type="button" disabled>Consultar por WhatsApp</button>
+    </div>
+    <div class="desc">
+      <h2>Descripción</h2>
+      <p>Jabón en espuma para manos, formato 800 ml para dispensador. Abre el chat (abajo a la derecha) y prueba
+      <b>"Cotizar este producto"</b>, o escribe lo que necesites como lo haría un cliente:
+      <i>"necesito 10 cajas de toalla interfoliada y 5 jabones"</i>.</p>
+    </div>
+  </section>
+</main>
+<script src="widget.js" defer></script>
+</body>
+</html>
