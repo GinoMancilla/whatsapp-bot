@@ -66,7 +66,7 @@ function extraerFicha(html, url) {
 }
 
 async function leerSitio() {
-  const { data: xml } = await axios.get(`${SITIO}/sitemap.xml`, { headers: { "User-Agent": UA }, timeout: 20000 });
+  const { data: xml } = await axios.get(`${SITIO}/sitemap.xml`, { headers: { "User-Agent": UA }, timeout: 60000 });
   const urls = [...String(xml).matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1].trim())
     .filter(u => u.startsWith(SITIO) && !/\/(ver-todos|contact|nosotros|politica|terminos|blog|customer|cart|search)(\/|$)/.test(u) && u !== SITIO && u !== `${SITIO}/`);
   const encontrados = [];
@@ -100,7 +100,8 @@ async function refrescar() {
         console.warn(`⚠️ Catálogo web: solo ${nuevos.length} fichas leídas, se mantiene la versión anterior`);
       }
     } catch (err) {
-      console.warn("⚠️ Catálogo web: no se pudo leer la tienda:", err.message);
+      console.warn("⚠️ Catálogo web: no se pudo leer la tienda (reintento en 5 min):", err.message);
+      setTimeout(() => { if (Date.now() - actualizado > REFRESCO) refrescar(); }, 5 * 60 * 1000);
     } finally { cargando = null; }
   })();
   return cargando;
